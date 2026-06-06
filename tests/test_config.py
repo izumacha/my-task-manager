@@ -54,6 +54,20 @@ class TaskPersistenceTests(unittest.TestCase):
                 loaded = load_tasks()
             self.assertEqual([t.title for t in loaded], ["ok", "ok2"])
 
+    def test_load_skips_entries_with_unparseable_due(self):
+        # 壊れた due を持つタスクが 1 件あっても、残りは読み込めること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")
+            with open(tasks_path, "w", encoding="utf-8") as f:
+                json.dump([
+                    {"title": "ok", "due": "2026-06-06T09:00:00"},
+                    {"title": "broken", "due": "not-a-date"},
+                    {"title": "ok2", "due": "2026-06-07T09:00:00"},
+                ], f)
+            with patch("reminder.config._TASKS_PATH", tasks_path):
+                loaded = load_tasks()
+            self.assertEqual([t.title for t in loaded], ["ok", "ok2"])
+
     def test_load_invalid_json_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tasks_path = os.path.join(tmpdir, "tasks.json")

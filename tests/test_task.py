@@ -52,6 +52,15 @@ class TaskModelTests(unittest.TestCase):
         t = Task.from_dict({"title": "x", "due": "2026-06-06T09:00:00", "unknown": 1})
         self.assertEqual(t.title, "x")
 
+    def test_unparseable_due_raises(self):
+        # 期限がパースできない値の場合は構築時に例外を送出する
+        with self.assertRaises(ValueError):
+            Task(title="x", due="not-a-date")
+
+    def test_from_dict_unparseable_due_raises(self):
+        with self.assertRaises(ValueError):
+            Task.from_dict({"title": "x", "due": "2026/06/06 09:00"})
+
 
 class MakeDueTests(unittest.TestCase):
     def test_future_time_today(self):

@@ -58,6 +58,13 @@ class Task:
         if self.recur_unit not in RECUR_UNITS:
             self.recur_unit = RECUR_NONE
         self.recur_interval = _coerce_interval(self.recur_interval)
+        # 期限がパースできない場合は不正なタスクとして例外を送出する。
+        # これにより load_tasks() 側の個別 try-except で 1 件だけスキップでき、
+        # 壊れた due を持つタスクが 1 件あってもアプリの起動を妨げない。
+        try:
+            datetime.datetime.strptime(self.due, ISO_FMT)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"期限の形式が不正です: {self.due!r}") from e
 
     @property
     def due_dt(self) -> datetime.datetime:
