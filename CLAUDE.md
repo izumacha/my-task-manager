@@ -78,6 +78,8 @@ pip install -r requirements-dev.txt  # 開発・テスト用
 | `reminder/__main__.py` | エントリーポイント（`python -m reminder`） |
 | `install_reminder_app.sh` | Linux デスクトップエントリ生成スクリプト |
 | `tests/test_*.py` | ユニットテスト（モジュール別） |
+| `tests/test_recurrence_contract.py` | `contract/recurrence_cases.json` を読み込み繰り返しロジックを契約駆動で検証 |
+| `contract/recurrence_cases.json` | 言語非依存の繰り返し契約ケース（入力→期待出力の真実の源。Web/スマホ版も同一契約に従う） |
 | `assets/reminder_icon.svg` | アプリアイコン |
 
 ## アーキテクチャ
