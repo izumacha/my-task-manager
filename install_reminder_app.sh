@@ -23,8 +23,8 @@ cat > "${DESKTOP_PATH}" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Reminder
-Comment=時刻指定リマインダーを起動します
+Name=Any Planner
+Comment=タスクプランナーを起動します
 Exec=${LAUNCHER_PATH}
 Icon=${ICON_PATH}
 Terminal=false
@@ -38,7 +38,7 @@ cat <<MSG
 - ランチャー: ${LAUNCHER_PATH}
 - デスクトップエントリ: ${DESKTOP_PATH}
 
-アプリ一覧に「Reminder」が表示されます。
+アプリ一覧に「Any Planner」が表示されます。
 表示されない場合は一度ログアウト/ログインするか、
 デスクトップ環境のキャッシュ更新を行ってください。
 MSG

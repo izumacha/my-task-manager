@@ -49,11 +49,18 @@ def _play_windows_sound() -> None:
     winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
 
 
-def _send_linux_notification() -> None:
-    """Linux: notify-send でデスクトップ通知を送信する。失敗時はログのみ残す。"""
+def _send_linux_notification(body: str = "") -> None:
+    """Linux: notify-send でデスクトップ通知を送信する。失敗時はログのみ残す。
+
+    Args:
+        body: 通知本文（タスク名など）。空の場合はタイトルのみ表示する。
+    """
+    args = ["notify-send", "--urgency=normal", "プランナー"]
+    if body:
+        args.append(body)
     try:
         subprocess.Popen(
-            ["notify-send", "--urgency=normal", "リマインダー"],
+            args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -71,7 +78,7 @@ def _ring_bell(root: tk.Tk) -> None:
         pass
 
 
-def play_notification_sound(root: tk.Tk) -> None:
+def play_notification_sound(root: tk.Tk, body: str = "") -> None:
     """通知音を再生する。
 
     プラットフォームごとに最適な方法を試み、失敗時は tkinter の bell() にフォールバックする。
@@ -79,6 +86,10 @@ def play_notification_sound(root: tk.Tk) -> None:
     - Windows: winsound.MessageBeep で警告音を再生
     - Linux: notify-send でデスクトップ通知を送信し、加えて bell を鳴らす
     - その他 / 上記失敗時: root.bell()
+
+    Args:
+        root: 鳴動フォールバックに使う Tk ルート。
+        body: Linux のデスクトップ通知に載せる本文（タスク名など）。
     """
     system_name = platform.system()
     try:
@@ -90,7 +101,7 @@ def play_notification_sound(root: tk.Tk) -> None:
             return
         if system_name == "Linux":
             # notify-send は音を伴わないことがあるため、後段の bell も併せて鳴らす
-            _send_linux_notification()
+            _send_linux_notification(body)
     except Exception:
         # OS 固有の再生に失敗した場合は bell にフォールバック
         pass
