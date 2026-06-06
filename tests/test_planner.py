@@ -360,6 +360,26 @@ class RolloverTests(AppTestCase):
         self.assertTrue(self.carry.called)
         self.assertTrue(self.prune.called)
 
+    def test_reschedule_after_rollover(self):
+        # 繰り越しが発生したら通知を再登録する
+        app, _ = self._app()
+        app.date_var = _DummyVar()
+        app.stats_var = _DummyVar()
+        app._schedule_all = Mock()
+        self.carry.side_effect = lambda *a, **k: 1  # 繰り越し 1 件発生
+        app._refresh()
+        app._schedule_all.assert_called_once()
+        self.save_tasks.assert_called()
+
+    def test_no_reschedule_without_rollover(self):
+        # 繰り越しが無ければ再スケジュールしない（無駄な再登録を避ける）
+        app, _ = self._app()
+        app.date_var = _DummyVar()
+        app.stats_var = _DummyVar()
+        app._schedule_all = Mock()
+        app._refresh()
+        app._schedule_all.assert_not_called()
+
 
 class BackwardCompatTests(unittest.TestCase):
     def test_reminder_app_alias(self):

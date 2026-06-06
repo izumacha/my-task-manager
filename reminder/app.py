@@ -490,6 +490,9 @@ class PlannerApp:
         today = self._planner_today()
         if self._roll_over(today):
             self._persist_tasks()
+            # 繰り越しでタスクの開始時刻が未来へ移ったので、通知を再登録する
+            # （開きっぱなしで日跨ぎしても繰り越し分が通知されるようにする）。
+            self._schedule_all()
         self.date_var.set(f"今日 {today.month}/{today.day}（{_WEEKDAY_JA[today.weekday()]}）")
         self._render_timeline(today)
         self._render_backlog(today)
