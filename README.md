@@ -237,9 +237,12 @@ my-task-manager/
 
 Python 未導入の環境にも配布したい場合は、`pyinstaller` で単体実行ファイル化する方法があります（バイナリが大きくなる・OS ごとにビルドが必要という難点はあります）。
 
+`reminder/__main__.py` は相対 import（`from .cli import main`）を使うため、PyInstaller の入口スクリプトに直接渡すと失敗します。代わりに、絶対 import で `main()` を呼ぶ 1 行のランチャーを用意します。
+
 ```bash
-pip install pyinstaller
-pyinstaller -F -w -n reminder reminder/__main__.py
+pip install . pyinstaller
+echo "from reminder import main; main()" > launch_reminder.py
+pyinstaller -F -w -n reminder launch_reminder.py
 ```
 
 ---
