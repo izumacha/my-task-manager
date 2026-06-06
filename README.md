@@ -1,4 +1,4 @@
-# Any Planner — タイムライン型タスクプランナー
+# my-task-manager — タイムライン型タスクプランナー
 
 > 1 日のタスクを「時間割」のように並べて、空き時間をひと目で把握できるデスクトップアプリです。
 
@@ -165,7 +165,7 @@ pip install -r requirements.txt   # まだの場合
 ./install_reminder_app.sh
 ```
 
-実行すると以下が作成され、アプリ一覧に **Any Planner** が表示されます。
+実行すると以下が作成され、アプリ一覧に **my-task-manager** が表示されます。
 
 - デスクトップエントリ: `~/.local/share/applications/reminder.desktop`
 - 起動用ランチャー: `~/.local/bin/reminder-app`

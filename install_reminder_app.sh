@@ -23,7 +23,7 @@ cat > "${DESKTOP_PATH}" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Any Planner
+Name=my-task-manager
 Comment=タスクプランナーを起動します
 Exec=${LAUNCHER_PATH}
 Icon=${ICON_PATH}
@@ -38,7 +38,7 @@ cat <<MSG
 - ランチャー: ${LAUNCHER_PATH}
 - デスクトップエントリ: ${DESKTOP_PATH}
 
-アプリ一覧に「Any Planner」が表示されます。
+アプリ一覧に「my-task-manager」が表示されます。
 表示されない場合は一度ログアウト/ログインするか、
 デスクトップ環境のキャッシュ更新を行ってください。
 MSG
