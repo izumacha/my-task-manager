@@ -4,9 +4,9 @@
 
 ## プロジェクト概要
 
-Python 製の自動化ツールをまとめたリポジトリです。現在は Any Planner 風の GUI タスクプランナーアプリ (`reminder/` パッケージ) が含まれています。1 日のタスクを時間軸（タイムライン）で可視化し、空き時間や「あとでやる」リストを扱います。繰り返しタスクは「完了した時点」を起点に日/週/月/年で再スケジュールされます。
+Python 製の自動化ツールをまとめたリポジトリです。現在は Any Planner 風の GUI タスクプランナーアプリ (`reminder/` パッケージ) が含まれています。1 日のタスクを**カレンダー（デイビュー）**で可視化し、空き時間や「あとでやる」リストを扱います。繰り返しタスクは「完了した時点」を起点に日/週/月/年で再スケジュールされます。
 
-UI は TimeTree を参考にした「ポップで親しみやすい」デザインを採用しており、配色・フォント・余白などのデザイントークンは `reminder/theme.py` に一元化しています。
+UI は TimeTree / Google カレンダーを参考にした「ポップで親しみやすい」デザインを採用しています。今日のタスクは縦の時間軸（起床〜就寝）に、所要時間ぶんの高さを持つ色付きブロックとして配置され、空き時間は「ブロックの無い余白」としてそのまま見えます。配色・フォント・余白・カレンダーの寸法などのデザイントークンは `reminder/theme.py` に一元化しています。
 
 ## 開発ハーネス（必達方針）
 
@@ -65,8 +65,8 @@ pip install -r requirements-dev.txt  # 開発・テスト用
 
 | ファイル | 説明 |
 |---|---|
-| `reminder/app.py` | PlannerApp GUI クラス（タイムライン + あとでやるリスト） |
-| `reminder/theme.py` | デザイントークン（配色・フォント・余白）の一元定義。TimeTree 風のポップな見た目とプラットフォーム差異ゼロ設計の基盤 |
+| `reminder/app.py` | PlannerApp GUI クラス（カレンダー Canvas + あとでやるリスト） |
+| `reminder/theme.py` | デザイントークン（配色・フォント・余白・カレンダー寸法）の一元定義。TimeTree 風のポップな見た目とプラットフォーム差異ゼロ設計の基盤 |
 | `reminder/task.py` | Task モデル（開始/所要/繰り返し）・完了時の次回タスク生成 |
 | `reminder/timeline.py` | 1日のタイムライン構築・空き時間・繰り越し（純粋ロジック） |
 | `reminder/stats.py` | 完了数・連続達成日数の集計（純粋ロジック） |
@@ -89,7 +89,8 @@ pip install -r requirements-dev.txt  # 開発・テスト用
 - **`timeline.py`**: `build_day_timeline()`（起床〜就寝に配置しタスク間の空き時間行を生成）、`carry_over_overdue()`（未完了の繰り越し）、`prune_old_completed()`、`suggest_for_free_time()`、時刻整形ヘルパー。GUI 非依存の純粋関数群。
 - **`stats.py`**: `completed_count_on()` / `current_streak()` / `total_completed()`。完了履歴（ISO 文字列リスト）から集計する純粋ロジック。
 - **`time_utils.py`**: `delay_ms_until()` および定数。GUI から独立したユーティリティ。
-- **`theme.py`**: 配色（ブランド色・状態色・タスクのカテゴリパレット）・フォント・余白などのデザイントークンと、タスクへ安定した色を割り当てる `category_color()` / `category_dot()`。GUI 非依存の純粋定数・関数。見た目を変えるときはここだけを編集すればよく、表示層（`app.py`）はトークンを参照するだけにする。
+- **`theme.py`**: 配色（ブランド色・状態色・タスクのカテゴリパレット）・フォント・余白・カレンダー寸法（`HOUR_HEIGHT` 等）などのデザイントークンと、タスクへ安定した色を割り当てる `category_color()` / `category_dot()`。GUI 非依存の純粋定数・関数。見た目を変えるときはここだけを編集すればよく、表示層（`app.py`）はトークンを参照するだけにする。
+- **`app.py` のカレンダー描画**: 今日のタスクは Treeview ではなく `tk.Canvas` で「デイビュー」として描画する（`_render_timeline` と補助の `_draw_time_grid` / `_draw_task_block` / `_draw_now_line` / `_assign_lanes`）。位置・高さは分→px 換算（`HOUR_HEIGHT`）で算出し、Canvas の実サイズに依存しない（テストで Canvas をモックしても算術が壊れない）。ブロックの選択はクリックされた `task.id` を `self._tl_selected` に保持する方式で、`build_day_timeline()` の純粋ロジックをそのまま再利用する。
 - **`notifications.py`**: `play_notification_sound()`, `_set_window_icon()` および OS 別ヘルパー。
 - **`config.py`**: `load_tasks()` / `save_tasks()` でタスク配列を、`load_prefs()` / `save_prefs()` で設定（`Prefs`: 起床/就寝/完了履歴）を `~/.config/reminder/` に永続化。壊れたエントリは個別にスキップする。
 - **`app.py`**: `PlannerApp` クラス。`__init__` で読み込み→繰り越し/整理→状態初期化→`_build_ui()`→`_refresh()`（タイムライン/バックログ/統計の再描画）→`_schedule_all()`。テスト時は `_build_ui` / `_refresh` / `_schedule_all` をモックして Tk インスタンスなしでテスト可能。`ReminderApp` は後方互換エイリアス。

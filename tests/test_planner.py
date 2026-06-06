@@ -184,7 +184,7 @@ class CompleteTests(AppTestCase):
                     recur_unit=RECUR_DAILY, completed=True,
                     completed_at=_iso(datetime.datetime.now()))
         app, _ = self._app([task])
-        app.timeline_tree.selection.return_value = (task.id,)
+        app._tl_selected = task.id
         app.complete_timeline_selected()
         # 統計に二重計上されず、繰り返しの重複生成もない
         self.assertEqual(len(app.prefs.completions), 0)
@@ -194,7 +194,7 @@ class CompleteTests(AppTestCase):
     def test_complete_non_recurring_marks_and_records(self):
         task = Task(title="買い物", due=_iso(datetime.datetime.now().replace(microsecond=0)))
         app, _ = self._app([task])
-        app.timeline_tree.selection.return_value = (task.id,)
+        app._tl_selected = task.id
         app.complete_timeline_selected()
         self.assertTrue(task.completed)
         self.assertIsNotNone(task.completed_at)
@@ -206,7 +206,7 @@ class CompleteTests(AppTestCase):
         task = Task(title="掃除", due=_iso(datetime.datetime.now().replace(microsecond=0)),
                     recur_unit=RECUR_DAILY, recur_interval=1)
         app, root = self._app([task])
-        app.timeline_tree.selection.return_value = (task.id,)
+        app._tl_selected = task.id
         before = datetime.datetime.now()
         app.complete_timeline_selected()
         # 元タスク(完了) + 次回タスク = 2 件
@@ -221,7 +221,7 @@ class DeleteTests(AppTestCase):
     def test_delete_removes(self):
         task = Task(title="x", due=_iso(datetime.datetime.now().replace(microsecond=0)))
         app, _ = self._app([task])
-        app.timeline_tree.selection.return_value = (task.id,)
+        app._tl_selected = task.id
         app.delete_timeline_selected()
         self.assertEqual(app.tasks, [])
 
@@ -236,7 +236,7 @@ class MoveTests(AppTestCase):
         task = Task(title="x", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)))
         app, _ = self._app([task])
         app.jobs[task.id] = "job-9"
-        app.timeline_tree.selection.return_value = (task.id,)
+        app._tl_selected = task.id
         app.move_to_backlog()
         self.assertEqual(task.due, "")
         self.assertNotIn(task.id, app.jobs)  # 通知ジョブが解除される
@@ -342,8 +342,9 @@ class RenderTests(AppTestCase):
         app.date_var = _DummyVar()
         app.stats_var = _DummyVar()
         app._refresh()
-        # タイムライン・バックログ双方に insert が走る
-        self.assertTrue(app.timeline_tree.insert.called)
+        # カレンダー（Canvas）には時刻グリッドが描かれ、バックログには insert が走る
+        self.assertTrue(app.timeline_tree.delete.called)
+        self.assertTrue(app.timeline_tree.create_line.called)
         self.assertTrue(app.backlog_tree.insert.called)
         self.assertIn("完了", app.stats_var.get())
 
