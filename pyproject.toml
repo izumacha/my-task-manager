@@ -1,7 +1,7 @@
 [project]
-name = "reminder"
+name = "my-task-manager"
 version = "0.2.0"
-description = "Any Planner 風タスクプランナー GUI アプリ（tkinter）。完了時点からの繰り返し（日/週/月/年）対応"
+description = "タイムライン型タスクプランナー GUI アプリ（tkinter）。Any Planner を参考に、完了時点からの繰り返し（日/週/月/年）に対応"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

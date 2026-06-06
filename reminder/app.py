@@ -213,7 +213,7 @@ class PlannerApp:
 
     def _build_ui(self) -> None:
         """ウィンドウとすべての UI コンポーネントを構築する。"""
-        self.root.title("Any Planner")
+        self.root.title("my-task-manager")
         _set_window_icon(self.root)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -886,7 +886,7 @@ class PlannerApp:
             self._schedule_task(task)
             return
         play_notification_sound(self.root, task.title)
-        messagebox.showinfo("Any Planner", f"⏰ {task.title}")
+        messagebox.showinfo("my-task-manager", f"⏰ {task.title}")
         self._refresh()
         self.status_var.set(f"「{task.title}」の開始時刻になりました。")
 
