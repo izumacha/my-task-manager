@@ -41,10 +41,11 @@ def load_tasks() -> list[Task]:
             # 1 件壊れていても残りは読み込めるよう、個別にスキップする
             logging.debug("壊れたタスクエントリをスキップしました: %r", entry)
             continue
-        # Treeview の iid には task.id を使うため一意でなければならない。
-        # バックアップのコピー/マージ等で id が重複した場合は再採番し、
-        # _render_tasks() での TclError（起動不能）を防ぐ。
-        if task.id in seen_ids:
+        # Treeview の iid には task.id を使うため「空でない一意な文字列」でなければならない。
+        # 手編集や不正なマージで id が空文字・非文字列（例: 123）・重複になっていると、
+        # 空文字は Treeview のルート item と衝突し、非文字列は選択時に文字列化されて
+        # _selected_task() がマッチできない。これらの場合は再採番して起動不能を防ぐ。
+        if not isinstance(task.id, str) or not task.id or task.id in seen_ids:
             task.id = uuid.uuid4().hex
         seen_ids.add(task.id)
         tasks.append(task)
