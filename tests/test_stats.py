@@ -44,6 +44,22 @@ class StreakTests(unittest.TestCase):
         self.assertEqual(current_streak(history, today), 2)
 
 
+class PlannerDayStatsTests(unittest.TestCase):
+    def test_overnight_completion_counts_for_previous_planner_day(self):
+        # 夜間レンジ 9:00-1:00。暦 6/6 00:30 の完了は 6/5 のプランナー日に数える。
+        history = [datetime.datetime(2026, 6, 6, 0, 30).strftime("%Y-%m-%dT%H:%M:%S")]
+        self.assertEqual(completed_count_on(history, datetime.date(2026, 6, 5), 9 * 60, 1 * 60), 1)
+        self.assertEqual(completed_count_on(history, datetime.date(2026, 6, 6), 9 * 60, 1 * 60), 0)
+
+    def test_overnight_streak_uses_planner_day(self):
+        history = [
+            datetime.datetime(2026, 6, 6, 0, 30).strftime("%Y-%m-%dT%H:%M:%S"),  # 6/5 planner
+            datetime.datetime(2026, 6, 5, 10, 0).strftime("%Y-%m-%dT%H:%M:%S"),  # 6/5 planner
+            datetime.datetime(2026, 6, 5, 0, 30).strftime("%Y-%m-%dT%H:%M:%S"),  # 6/4 planner
+        ]
+        self.assertEqual(current_streak(history, datetime.date(2026, 6, 5), 9 * 60, 1 * 60), 2)
+
+
 class TotalTests(unittest.TestCase):
     def test_total_counts_valid_entries(self):
         history = [_iso(2026, 6, 6), _iso(2026, 6, 5), "bad"]

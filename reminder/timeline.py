@@ -203,17 +203,20 @@ def max_free_slot(
     sleep_min: int = DEFAULT_SLEEP_MIN,
     now: datetime.datetime | None = None,
 ) -> int:
-    """指定日で最も長い「連続した」空き時間（分）を返す。
+    """指定日で最も長い「これから使える連続した」空き時間（分）を返す。
 
     タスクの提案は合計ではなくこの最大連続枠を基準にすべき。合計に空きが
-    あっても、個々の枠に収まらないタスクは実際には置けないため。
+    あっても個々の枠に収まらないタスクは置けないため。さらに、既に経過した
+    時間は除外する（now より前の空きは使えないので、now でクリップする）。
     """
-    frees = [
-        row.minutes
-        for row in build_day_timeline(tasks, date, wake_min, sleep_min, now)
-        if row.kind == ROW_FREE
-    ]
-    return max(frees, default=0)
+    now = now or datetime.datetime.now()
+    best = 0
+    for row in build_day_timeline(tasks, date, wake_min, sleep_min, now):
+        if row.kind != ROW_FREE:
+            continue
+        usable = int((row.end - max(row.start, now)).total_seconds() // 60)
+        best = max(best, usable)
+    return best
 
 
 def backlog_tasks(tasks: list[Task]) -> list[Task]:
@@ -230,11 +233,29 @@ def suggest_for_free_time(tasks: list[Task], minutes: int) -> list[Task]:
     return sorted(fits, key=lambda t: t.duration_min, reverse=True)
 
 
-def carry_over_overdue(tasks: list[Task], today: datetime.date) -> int:
-    """未完了のまま前日以前になったスケジュール済みタスクを当日へ繰り越す。
+def _calendar_dt(
+    planner_date: datetime.date, t: datetime.time, wake_min: int, sleep_min: int
+) -> datetime.datetime:
+    """プランナー日 planner_date 上の時刻 t に対応する暦上の日時を返す。
 
-    時刻はそのまま、日付だけ today に更新する（その日のうちに片付ける運用に合わせる）。
-    タスクを破壊的に書き換え、繰り越した件数を返す。
+    夜間レンジ（就寝が翌日）の早朝部分（0:00〜就寝境界）は翌暦日になる。
+    """
+    if sleep_min <= wake_min and (t.hour * 60 + t.minute) < sleep_min:
+        return datetime.datetime.combine(planner_date + datetime.timedelta(days=1), t)
+    return datetime.datetime.combine(planner_date, t)
+
+
+def carry_over_overdue(
+    tasks: list[Task],
+    today: datetime.date,
+    wake_min: int = DEFAULT_WAKE_MIN,
+    sleep_min: int = DEFAULT_SLEEP_MIN,
+) -> int:
+    """未完了のまま前のプランナー日になったタスクを当日へ繰り越す。
+
+    判定・配置はプランナー日基準で行う（夜間レンジでは就寝境界まで前日扱い）。
+    時刻はそのまま、プランナー日だけ today に更新する。タスクを破壊的に
+    書き換え、繰り越した件数を返す。
 
     Returns:
         繰り越したタスク数。
@@ -244,8 +265,8 @@ def carry_over_overdue(tasks: list[Task], today: datetime.date) -> int:
         if not task.is_scheduled or task.completed:
             continue
         start = task.due_dt
-        if start.date() < today:
-            new_start = datetime.datetime.combine(today, start.time())
+        if planner_day(start, wake_min, sleep_min) < today:
+            new_start = _calendar_dt(today, start.time(), wake_min, sleep_min)
             task.due = new_start.strftime(ISO_FMT)
             moved += 1
     return moved

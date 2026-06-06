@@ -179,6 +179,13 @@ class MaxFreeSlotTests(unittest.TestCase):
         # 末尾 10:30-23:00 = 750分 が最大
         self.assertEqual(max_free_slot(tasks, self.today, 7 * 60, 23 * 60, self.now), 750)
 
+    def test_elapsed_time_excluded_from_slot(self):
+        # 20:00 時点・タスクなし・07:00-23:00 の日では、空き行は 16h だが
+        # これから使えるのは 20:00-23:00 の 3h（180分）だけ。
+        today = datetime.date(2026, 6, 6)
+        now = datetime.datetime(2026, 6, 6, 20, 0)
+        self.assertEqual(max_free_slot([], today, 7 * 60, 23 * 60, now), 180)
+
     def test_no_60min_slot_between_two_30min_gaps(self):
         # 1日を 30 分枠だけにする: 07:00 から 30 分タスクと 30 分空きを交互に。
         tasks = [
@@ -239,6 +246,21 @@ class CarryOverTests(unittest.TestCase):
             _t("今日", "2026-06-06T09:00:00", 30),
         ]
         self.assertEqual(carry_over_overdue(tasks, today), 0)
+
+    def test_overnight_carry_uses_planner_day(self):
+        # 夜間レンジ 9:00-1:00。暦上 6/6 00:30 のタスクは 6/5 のプランナー日に属する。
+        # 6/6 のプランナー日へ繰り越すと、6/6 プランナー日の 00:30 = 暦上 6/7 00:30。
+        today = datetime.date(2026, 6, 6)
+        tasks = [_t("夜更かし", "2026-06-06T00:30:00", 30)]
+        moved = carry_over_overdue(tasks, today, 9 * 60, 1 * 60)
+        self.assertEqual(moved, 1)
+        self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 6, 7, 0, 30))
+
+    def test_overnight_today_task_not_carried(self):
+        # 6/6 プランナー日（暦 6/7 00:30）のタスクは today=6/6 では繰り越さない
+        today = datetime.date(2026, 6, 6)
+        tasks = [_t("当日深夜", "2026-06-07T00:30:00", 30)]
+        self.assertEqual(carry_over_overdue(tasks, today, 9 * 60, 1 * 60), 0)
 
 
 class PruneCompletedTests(unittest.TestCase):

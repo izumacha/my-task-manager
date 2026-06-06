@@ -35,8 +35,10 @@ class AppTestCase(unittest.TestCase):
         self.save_tasks = self._start("reminder.app.save_tasks")
         self.save_prefs = self._start("reminder.app.save_prefs")
         # 起動時整理はテストでは無効化（提供したタスクをそのまま使う）
-        self._start("reminder.app.prune_old_completed", side_effect=lambda t, today: t)
-        self._start("reminder.app.carry_over_overdue", side_effect=lambda t, today: 0)
+        self.prune = self._start("reminder.app.prune_old_completed",
+                                 side_effect=lambda tasks, *a, **k: tasks)
+        self.carry = self._start("reminder.app.carry_over_overdue",
+                                 side_effect=lambda *a, **k: 0)
 
     def _start(self, target, **kw):
         p = patch(target, **kw)
@@ -344,6 +346,19 @@ class RenderTests(AppTestCase):
         self.assertTrue(app.timeline_tree.insert.called)
         self.assertTrue(app.backlog_tree.insert.called)
         self.assertIn("完了", app.stats_var.get())
+
+
+class RolloverTests(AppTestCase):
+    def test_refresh_runs_rollover(self):
+        # 再描画のたびに繰り越し・整理が走る（日跨ぎで開きっぱなしでも消えない）
+        app, _ = self._app()
+        app.date_var = _DummyVar()
+        app.stats_var = _DummyVar()
+        self.carry.reset_mock()
+        self.prune.reset_mock()
+        app._refresh()
+        self.assertTrue(self.carry.called)
+        self.assertTrue(self.prune.called)
 
 
 class BackwardCompatTests(unittest.TestCase):

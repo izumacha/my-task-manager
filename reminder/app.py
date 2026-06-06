@@ -81,12 +81,8 @@ class PlannerApp:
         self.prefs: Prefs = load_prefs()
         self.jobs: dict[str, str] = {}
 
-        # 起動時の整理: 前日以前の完了タスクを破棄し、未完了の繰り越しを当日へ移す。
-        # 夜間レンジでは就寝境界まで前日のプランナー日として扱う。
-        today = self._planner_today()
-        self.tasks = prune_old_completed(self.tasks, today)
-        carry_over_overdue(self.tasks, today)
-        self._persist_tasks()
+        # 起動時・再描画時の整理（前日以前の完了破棄・未完了の繰り越し）は
+        # _refresh() 内の _roll_over() に集約している。
 
         # 既定開始時刻は「次の 5 分刻み」。分が繰り上がるときは時・日も繰り上げ、
         # 過去時刻が初期値にならないようにする（add_to_timeline は当日固定のため）。
@@ -486,12 +482,25 @@ class PlannerApp:
     # ------------------------------------------------------------ 表示
 
     def _refresh(self) -> None:
-        """日付・統計・タイムライン・バックログをすべて再描画する。"""
+        """日付・統計・タイムライン・バックログをすべて再描画する。
+
+        アプリを開いたまま日付（プランナー日）をまたいでも、再描画のたびに
+        繰り越し・整理を行うため、未完了タスクが消えることはない。
+        """
         today = self._planner_today()
+        if self._roll_over(today):
+            self._persist_tasks()
         self.date_var.set(f"今日 {today.month}/{today.day}（{_WEEKDAY_JA[today.weekday()]}）")
         self._render_timeline(today)
         self._render_backlog(today)
         self._render_stats(today)
+
+    def _roll_over(self, today: datetime.date) -> bool:
+        """プランナー日 today を基準に完了整理・繰り越しを行う。変化があれば True。"""
+        before = len(self.tasks)
+        self.tasks = prune_old_completed(self.tasks, today)
+        moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min())
+        return moved > 0 or len(self.tasks) != before
 
     def _render_timeline(self, today: datetime.date) -> None:
         tree = self.timeline_tree
@@ -529,9 +538,10 @@ class PlannerApp:
                         tags=tags)
 
     def _render_stats(self, today: datetime.date) -> None:
-        done = completed_count_on(self.prefs.completions, today)
-        streak = current_streak(self.prefs.completions, today)
-        free = free_minutes_today(self.tasks, today, self._wake_min(), self._sleep_min())
+        wake, sleep = self._wake_min(), self._sleep_min()
+        done = completed_count_on(self.prefs.completions, today, wake, sleep)
+        streak = current_streak(self.prefs.completions, today, wake, sleep)
+        free = free_minutes_today(self.tasks, today, wake, sleep)
         self.stats_var.set(
             f"今日の完了 {done}件 ・ 連続 {streak}日 ・ 空き {format_duration(free)}")
 
