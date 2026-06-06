@@ -358,9 +358,16 @@ class PlannerApp:
     # ------------------------------------------------------------ スケジュール
 
     def _schedule_all(self) -> None:
-        """起動時に、未来に期限が来るすべてのタスクの通知をスケジュールする。"""
+        """起動時に、未来に期限が来るすべてのタスクの通知をスケジュールする。
+
+        1 件のスケジュール登録に失敗しても、残りのタスクと起動自体は妨げない
+        （load_tasks() と同じく「1 件の問題で起動不能にしない」方針に揃える）。
+        """
         for task in self.tasks:
-            self._schedule_task(task)
+            try:
+                self._schedule_task(task)
+            except Exception:
+                logging.warning("タスクの通知スケジュールに失敗しました: %s", task.id)
 
     def _schedule_task(self, task: Task) -> None:
         """1 件のタスクについて、期限時刻に通知するジョブを登録する。

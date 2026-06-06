@@ -242,6 +242,17 @@ class ScheduleTaskTests(unittest.TestCase):
         root.after_cancel.assert_called_once_with("job-9")
         self.assertNotIn("abc", app.jobs)
 
+    def test_schedule_all_survives_single_failure(self):
+        # 1 件のスケジュール登録が失敗しても残りは登録され、起動は妨げられない
+        t1 = Task(title="a", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)))
+        t2 = Task(title="b", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=2)))
+        app, root = _create_app()
+        app.tasks = [t1, t2]
+        root.after.side_effect = [RuntimeError("after failed"), "job-2"]
+        app._schedule_all()  # 例外を送出しないこと
+        self.assertNotIn(t1.id, app.jobs)
+        self.assertEqual(app.jobs.get(t2.id), "job-2")
+
 
 class OnTaskDueTests(unittest.TestCase):
     @patch("reminder.app.messagebox.showinfo")
