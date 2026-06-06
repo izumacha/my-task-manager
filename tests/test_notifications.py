@@ -60,8 +60,11 @@ class PlayNotificationSoundTests(unittest.TestCase):
         mock_thread_cls.return_value.start.assert_called_once()
         root.bell.assert_not_called()
 
+    @patch("reminder.notifications._play_windows_sound", side_effect=ImportError("no winsound"))
     @patch("reminder.notifications.platform.system", return_value="Windows")
-    def test_falls_back_to_bell_when_winsound_unavailable(self, _mock_system):
+    def test_falls_back_to_bell_when_winsound_unavailable(self, _mock_system, _mock_win):
+        # winsound が使えない（= 例外）場合は bell にフォールバックする。
+        # 実際の Windows ランナーでも決定的に検証できるよう、明示的に失敗させる。
         root = Mock()
         play_notification_sound(root)
         root.bell.assert_called_once_with()
