@@ -56,6 +56,7 @@ from .timeline import (
     hhmm_to_min,
     max_free_slot,
     min_to_hhmm,
+    planner_day,
     prune_old_completed,
     suggest_for_free_time,
 )
@@ -80,8 +81,9 @@ class PlannerApp:
         self.prefs: Prefs = load_prefs()
         self.jobs: dict[str, str] = {}
 
-        # 起動時の整理: 前日以前の完了タスクを破棄し、未完了の繰り越しを当日へ移す
-        today = datetime.date.today()
+        # 起動時の整理: 前日以前の完了タスクを破棄し、未完了の繰り越しを当日へ移す。
+        # 夜間レンジでは就寝境界まで前日のプランナー日として扱う。
+        today = self._planner_today()
         self.tasks = prune_old_completed(self.tasks, today)
         carry_over_overdue(self.tasks, today)
         self._persist_tasks()
@@ -112,6 +114,11 @@ class PlannerApp:
         """既定の開始時刻（次の 5 分刻み）を返す。時・日も適切に繰り上げる。"""
         add = 5 - (now.minute % 5)  # 1〜5（既に 5 分刻みなら 5 分後）
         return (now + datetime.timedelta(minutes=add)).replace(second=0, microsecond=0)
+
+    def _planner_today(self, now: datetime.datetime | None = None) -> datetime.date:
+        """現在のプランナー日を返す（夜間レンジは就寝境界まで前日扱い）。"""
+        now = now or datetime.datetime.now()
+        return planner_day(now, self._wake_min(), self._sleep_min())
 
     def _wake_min(self) -> int:
         """設定の起床時刻を分で返す（不正値は既定値）。"""
@@ -352,8 +359,9 @@ class PlannerApp:
         start = self._input_start_time()
         duration = self._input_duration()
         recur_unit, interval = self._input_recurrence()
-        # 当日の時間軸に置きたいので、過去時刻でも翌日へ繰り越さない
-        due = make_due(start, roll_if_past=False)
+        # 過去時刻が選ばれた場合は翌日へ繰り上げ、通知が必ず効くようにする
+        # （前方プランナーとしての挙動。深夜 0:00 を選んだ場合も翌日になる）。
+        due = make_due(start, roll_if_past=True)
         task = Task(title=title, due=due, duration_min=duration,
                     recur_unit=recur_unit, recur_interval=interval)
         self.tasks.append(task)
@@ -469,7 +477,7 @@ class PlannerApp:
             self.status_var.set("予定に追加するタスクを選択してください。")
             return
         start = self._input_start_time()
-        task.due = make_due(start, roll_if_past=False)
+        task.due = make_due(start, roll_if_past=True)
         self._persist_tasks()
         self._refresh()
         self._schedule_task(task)
@@ -479,10 +487,10 @@ class PlannerApp:
 
     def _refresh(self) -> None:
         """日付・統計・タイムライン・バックログをすべて再描画する。"""
-        today = datetime.date.today()
+        today = self._planner_today()
         self.date_var.set(f"今日 {today.month}/{today.day}（{_WEEKDAY_JA[today.weekday()]}）")
         self._render_timeline(today)
-        self._render_backlog()
+        self._render_backlog(today)
         self._render_stats(today)
 
     def _render_timeline(self, today: datetime.date) -> None:
@@ -504,13 +512,13 @@ class PlannerApp:
                             values=(span, f"空き {format_duration(row.minutes)}", ""),
                             tags=(ROW_FREE,))
 
-    def _render_backlog(self) -> None:
+    def _render_backlog(self, today: datetime.date) -> None:
         tree = self.backlog_tree
         for item in tree.get_children():
             tree.delete(item)
         # 提案は「最大連続空き枠」に収まるものに限る（合計空きでは個々の枠に
         # 置けないタスクまで提案してしまい誤解を招くため）。
-        slot = max_free_slot(self.tasks, datetime.date.today(),
+        slot = max_free_slot(self.tasks, today,
                              self._wake_min(), self._sleep_min())
         suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}
         for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:

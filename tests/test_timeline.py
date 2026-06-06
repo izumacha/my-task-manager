@@ -19,6 +19,7 @@ from reminder.timeline import (
     hhmm_to_min,
     max_free_slot,
     min_to_hhmm,
+    planner_day,
     prune_old_completed,
     scheduled_on,
     suggest_for_free_time,
@@ -125,6 +126,45 @@ class BuildTimelineTests(unittest.TestCase):
         rows = build_day_timeline(tasks, self.today, 9 * 60, 1 * 60, self.now)
         titles = [r.task.title for r in rows if r.kind == ROW_TASK]
         self.assertIn("夜更かし作業", titles)
+
+
+class PlannerDayTests(unittest.TestCase):
+    def test_normal_range_uses_calendar_date(self):
+        # 通常レンジ（7:00-23:00）は常に暦日
+        self.assertEqual(planner_day(datetime.datetime(2026, 6, 6, 2, 0), 7 * 60, 23 * 60),
+                         datetime.date(2026, 6, 6))
+        self.assertEqual(planner_day(datetime.datetime(2026, 6, 6, 23, 30), 7 * 60, 23 * 60),
+                         datetime.date(2026, 6, 6))
+
+    def test_overnight_before_sleep_is_previous_day(self):
+        # 夜間レンジ 9:00-1:00 で 00:15 はまだ前日のプランナー日
+        self.assertEqual(planner_day(datetime.datetime(2026, 6, 7, 0, 15), 9 * 60, 1 * 60),
+                         datetime.date(2026, 6, 6))
+
+    def test_overnight_after_sleep_is_same_day(self):
+        # 就寝 01:00 を過ぎた 09:30 は当日
+        self.assertEqual(planner_day(datetime.datetime(2026, 6, 7, 9, 30), 9 * 60, 1 * 60),
+                         datetime.date(2026, 6, 7))
+
+
+class WindowExtensionTests(unittest.TestCase):
+    def test_task_after_sleep_boundary_still_visible(self):
+        # 就寝 23:00 の後（23:15）に置いたタスクも消えずに表示される
+        today = datetime.date(2026, 6, 6)
+        now = datetime.datetime(2026, 6, 6, 7, 0)
+        tasks = [_t("夜の作業", "2026-06-06T23:15:00", 30)]
+        rows = build_day_timeline(tasks, today, 7 * 60, 23 * 60, now)
+        titles = [r.task.title for r in rows if r.kind == ROW_TASK]
+        self.assertIn("夜の作業", titles)
+
+    def test_task_before_wake_still_visible(self):
+        # 起床 07:00 の前（06:00）に置いたタスクも表示される
+        today = datetime.date(2026, 6, 6)
+        now = datetime.datetime(2026, 6, 6, 8, 0)
+        tasks = [_t("早朝ラン", "2026-06-06T06:00:00", 30)]
+        rows = build_day_timeline(tasks, today, 7 * 60, 23 * 60, now)
+        titles = [r.task.title for r in rows if r.kind == ROW_TASK]
+        self.assertIn("早朝ラン", titles)
 
 
 class MaxFreeSlotTests(unittest.TestCase):

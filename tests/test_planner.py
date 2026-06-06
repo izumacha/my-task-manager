@@ -117,7 +117,7 @@ class AddToTimelineTests(AppTestCase):
         mock_warn.assert_called_once()
         self.assertEqual(app.tasks, [])
 
-    def test_adds_scheduled_task_today(self):
+    def test_adds_scheduled_future_task(self):
         app, _ = self._app()
         app.title_var.set("会議")
         app.hour_var.set("23")
@@ -130,8 +130,9 @@ class AddToTimelineTests(AppTestCase):
         self.assertEqual(len(app.tasks), 1)
         task = app.tasks[0]
         self.assertTrue(task.is_scheduled)
-        self.assertEqual(task.due_dt.date(), datetime.date.today())
+        # 入力した時刻が保持され、過去なら翌日へ繰り上がって未来になる
         self.assertEqual((task.due_dt.hour, task.due_dt.minute), (23, 59))
+        self.assertGreaterEqual(task.due_dt, datetime.datetime.now() - datetime.timedelta(seconds=5))
         self.assertEqual(task.duration_min, 45)
         self.assertEqual(task.recur_unit, RECUR_DAILY)
         self.assertEqual(task.recur_interval, 2)
@@ -246,8 +247,9 @@ class MoveTests(AppTestCase):
         app.minute_var.set("30")
         app.schedule_backlog_selected()
         self.assertTrue(task.is_scheduled)
-        self.assertEqual(task.due_dt.date(), datetime.date.today())
+        # 入力時刻を保持し、過去なら翌日へ繰り上がって未来になる
         self.assertEqual((task.due_dt.hour, task.due_dt.minute), (10, 30))
+        self.assertGreaterEqual(task.due_dt, datetime.datetime.now() - datetime.timedelta(seconds=5))
 
 
 class ScheduleTaskTests(AppTestCase):

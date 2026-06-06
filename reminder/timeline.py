@@ -85,6 +85,18 @@ def day_bounds(
     return start, end
 
 
+def planner_day(moment: datetime.datetime, wake_min: int, sleep_min: int) -> datetime.date:
+    """その瞬間が属する「プランナー日」を返す。
+
+    就寝が翌日にまわる夜間レンジ（例: 起床 09:00 / 就寝 01:00）では、
+    深夜 0:00〜就寝境界の間はまだ「前日」のプランナー日として扱う。
+    こうすることで、日付が変わっても就寝境界まで同じ 1 日の予定を表示できる。
+    """
+    if sleep_min <= wake_min and (moment.hour * 60 + moment.minute) < sleep_min:
+        return moment.date() - datetime.timedelta(days=1)
+    return moment.date()
+
+
 def _task_status(task: Task, now: datetime.datetime) -> str:
     """タスク行の状態を判定する。"""
     if task.completed:
@@ -138,12 +150,20 @@ def build_day_timeline(
     """
     now = now or datetime.datetime.now()
     day_start, day_end = day_bounds(date, wake_min, sleep_min)
-    # 表示する時間窓 [day_start, day_end) で抽出する。夜間レンジで翌日に
-    # まわる就寝境界までのタスク（例: 00:30）も含める。
-    todays = scheduled_in_window(tasks, day_start, day_end)
+    # そのプランナー日に属するタスクを抽出（夜間レンジの翌 00:30 等も
+    # planner_day により前日側に正しく割り当てられる）。
+    todays = sorted(
+        (t for t in tasks
+         if t.is_scheduled and planner_day(t.due_dt, wake_min, sleep_min) == date),
+        key=lambda t: t.due_dt,
+    )
+    # 表示窓は基本 [day_start, day_end) だが、起床前・就寝後など範囲外に
+    # 始まる/終わるタスクが消えないよう、実タスクを内包するよう窓を広げる。
+    start_bound = min([day_start, *(t.due_dt for t in todays)])
+    end_bound = max([day_end, *(t.end_dt for t in todays)])
 
     rows: list[TimelineRow] = []
-    cursor = day_start
+    cursor = start_bound
     for task in todays:
         start, end = task.due_dt, task.end_dt
         gap = int((start - cursor).total_seconds() // 60)
@@ -154,10 +174,10 @@ def build_day_timeline(
         if end > cursor:
             cursor = end
 
-    # 最後のタスク以降、就寝までの空き時間
-    tail = int((day_end - cursor).total_seconds() // 60)
+    # 最後のタスク以降、就寝（または最終タスク終了）までの空き時間
+    tail = int((end_bound - cursor).total_seconds() // 60)
     if tail > 0:
-        rows.append(TimelineRow(ROW_FREE, cursor, day_end, tail))
+        rows.append(TimelineRow(ROW_FREE, cursor, end_bound, tail))
     return rows
 
 
