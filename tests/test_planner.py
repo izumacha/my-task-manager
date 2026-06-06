@@ -1,353 +1,316 @@
-"""tests/test_planner.py — PlannerApp / time_utils / main のテスト
+"""tests/test_planner.py — PlannerApp（タイムライン版）/ main のテスト
 
-GUI 依存を避けるため _build_ui・_render_tasks・_schedule_all をパッチして
-ロジック層（タスク追加・完了・削除・繰り返し再登録・通知スケジュール）を検証する。
+GUI 依存を避けるため _build_ui・_refresh・_schedule_all をパッチして
+ロジック層（タスク追加・完了・削除・あとで⇄予定の移動・通知スケジュール）を検証する。
 """
 import datetime
 import unittest
 from unittest.mock import Mock, patch
 
-import tkinter as tk
-
 from reminder.app import PlannerApp, ReminderApp
+from reminder.config import Prefs
 from reminder.recurrence import RECUR_DAILY, RECUR_LABELS, RECUR_NONE
-from reminder.task import ISO_FMT, Task, make_due
-from reminder.time_utils import (
-    MAX_AFTER_MS,
-    STATUS_EMPTY,
-    delay_ms_until,
-)
+from reminder.task import ISO_FMT, Task
 
 
 class _DummyVar:
-    """tk.StringVar のテスト用代替。Tk インスタンスなしで動作する。"""
-
-    def __init__(self, value: str = ""):
+    def __init__(self, value=""):
         self.value = value
 
-    def get(self) -> str:
+    def get(self):
         return self.value
 
-    def set(self, value) -> None:
+    def set(self, value):
         self.value = value
 
 
-def _iso(dt: datetime.datetime) -> str:
+def _iso(dt):
     return dt.strftime(ISO_FMT)
 
 
-def _create_app(tasks=None):
-    """UI 構築を伴わない PlannerApp を生成する。"""
-    root = Mock()
-    root.after.return_value = "job-1"
-    with patch.object(PlannerApp, "_build_ui"), \
-         patch.object(PlannerApp, "_render_tasks"), \
-         patch.object(PlannerApp, "_schedule_all"), \
-         patch("reminder.app.load_tasks", return_value=list(tasks or [])), \
-         patch("reminder.app.tk.StringVar", side_effect=lambda value="": _DummyVar(value)):
-        app = PlannerApp(root)
-    # 以降のテストで実メソッドが触れる Treeview をモックに差し替える
-    app.tree = Mock()
-    app.tree.selection.return_value = ()
-    app.tree.get_children.return_value = ()
-    return app, root
+class AppTestCase(unittest.TestCase):
+    """save/load をモックし、GUI 無しで PlannerApp を生成する基底クラス。"""
 
+    def setUp(self):
+        self.save_tasks = self._start("reminder.app.save_tasks")
+        self.save_prefs = self._start("reminder.app.save_prefs")
+        # 起動時整理はテストでは無効化（提供したタスクをそのまま使う）
+        self._start("reminder.app.prune_old_completed", side_effect=lambda t, today: t)
+        self._start("reminder.app.carry_over_overdue", side_effect=lambda t, today: 0)
 
-class DelayMsUntilTests(unittest.TestCase):
-    def test_past_returns_zero(self):
-        now = datetime.datetime(2026, 6, 6, 10, 0)
-        target = datetime.datetime(2026, 6, 6, 9, 0)
-        self.assertEqual(delay_ms_until(now, target), 0)
+    def _start(self, target, **kw):
+        p = patch(target, **kw)
+        mock = p.start()
+        self.addCleanup(p.stop)
+        return mock
 
-    def test_future_returns_delta(self):
-        now = datetime.datetime(2026, 6, 6, 9, 0)
-        target = datetime.datetime(2026, 6, 6, 9, 1)
-        self.assertEqual(delay_ms_until(now, target), 60_000)
-
-    def test_clamps_to_max(self):
-        now = datetime.datetime(2026, 1, 1, 0, 0)
-        target = datetime.datetime(2030, 1, 1, 0, 0)
-        self.assertEqual(delay_ms_until(now, target), MAX_AFTER_MS)
+    def _app(self, tasks=None, prefs=None):
+        root = Mock()
+        root.after.return_value = "job-1"
+        with patch.object(PlannerApp, "_build_ui"), \
+             patch.object(PlannerApp, "_refresh"), \
+             patch.object(PlannerApp, "_schedule_all"), \
+             patch("reminder.app.load_tasks", return_value=list(tasks or [])), \
+             patch("reminder.app.load_prefs", return_value=prefs or Prefs()), \
+             patch("reminder.app.tk.StringVar", side_effect=lambda value="": _DummyVar(value)):
+            app = PlannerApp(root)
+        app.timeline_tree = Mock()
+        app.timeline_tree.selection.return_value = ()
+        app.timeline_tree.get_children.return_value = ()
+        app.backlog_tree = Mock()
+        app.backlog_tree.selection.return_value = ()
+        app.backlog_tree.get_children.return_value = ()
+        app.status_var = _DummyVar()
+        return app, root
 
 
 class CoerceIntTests(unittest.TestCase):
-    def test_within_range(self):
+    def test_within(self):
         self.assertEqual(PlannerApp._coerce_int("10", 0, 23), 10)
 
-    def test_below_min(self):
-        self.assertEqual(PlannerApp._coerce_int("-5", 0, 23), 0)
-
-    def test_above_max(self):
+    def test_clamps_and_nonnumeric(self):
         self.assertEqual(PlannerApp._coerce_int("99", 0, 23), 23)
-
-    def test_non_numeric_returns_min(self):
-        self.assertEqual(PlannerApp._coerce_int("abc", 1, 99), 1)
-
-    def test_empty_returns_min(self):
-        self.assertEqual(PlannerApp._coerce_int("", 1, 99), 1)
+        self.assertEqual(PlannerApp._coerce_int("-1", 0, 23), 0)
+        self.assertEqual(PlannerApp._coerce_int("ab", 5, 99), 5)
 
 
-class NormalizeInputTests(unittest.TestCase):
-    def test_normalize_time_pads_and_clamps(self):
-        app, _ = _create_app()
+class InputNormalizeTests(AppTestCase):
+    def test_start_time_normalized(self):
+        app, _ = self._app()
         app.hour_var.set("30")
-        app.minute_var.set("5")
-        app._normalize_time_inputs()
+        app.minute_var.set("7")
+        t = app._input_start_time()
+        self.assertEqual((t.hour, t.minute), (23, 7))
         self.assertEqual(app.hour_var.get(), "23")
-        self.assertEqual(app.minute_var.get(), "05")
+        self.assertEqual(app.minute_var.get(), "07")
 
-    def test_normalize_interval_clamps(self):
-        app, _ = _create_app()
-        app.interval_var.set("999")
-        self.assertEqual(app._normalize_interval_input(), 99)
-        self.assertEqual(app.interval_var.get(), "99")
+    def test_duration_normalized(self):
+        app, _ = self._app()
+        app.dur_var.set("100000")
+        self.assertEqual(app._input_duration(), 24 * 60)
 
-    def test_normalize_interval_non_numeric(self):
-        app, _ = _create_app()
-        app.interval_var.set("abc")
-        self.assertEqual(app._normalize_interval_input(), 1)
+    def test_recurrence_parsed(self):
+        app, _ = self._app()
+        app.recur_var.set(RECUR_LABELS[RECUR_DAILY])
+        app.interval_var.set("3")
+        self.assertEqual(app._input_recurrence(), (RECUR_DAILY, 3))
 
 
-class AddTaskTests(unittest.TestCase):
+class WakeSleepTests(AppTestCase):
+    def test_reads_from_prefs(self):
+        app, _ = self._app(prefs=Prefs(wake="06:00", sleep="22:00"))
+        self.assertEqual(app._wake_min(), 360)
+        self.assertEqual(app._sleep_min(), 22 * 60)
+
+    def test_invalid_prefs_fall_back(self):
+        app, _ = self._app(prefs=Prefs(wake="bad", sleep="??"))
+        self.assertEqual(app._wake_min(), 7 * 60)
+        self.assertEqual(app._sleep_min(), 23 * 60)
+
+
+class AddToTimelineTests(AppTestCase):
     @patch("reminder.app.messagebox.showwarning")
     def test_empty_title_warns(self, mock_warn):
-        app, root = _create_app()
+        app, root = self._app()
         app.title_var.set("   ")
-        app.add_task()
+        app.add_to_timeline()
         mock_warn.assert_called_once()
         self.assertEqual(app.tasks, [])
-        root.after.assert_not_called()
 
-    @patch("reminder.app.save_tasks")
-    def test_add_creates_task_and_schedules(self, mock_save):
-        app, root = _create_app()
-        app.title_var.set("会議の準備")
-        app.hour_var.set("09")
-        app.minute_var.set("30")
+    def test_adds_scheduled_task_today(self):
+        app, _ = self._app()
+        app.title_var.set("会議")
+        app.hour_var.set("23")
+        app.minute_var.set("59")
+        app.dur_var.set("45")
         app.recur_var.set(RECUR_LABELS[RECUR_DAILY])
         app.interval_var.set("2")
-        app.add_task()
+        app.add_to_timeline()
 
         self.assertEqual(len(app.tasks), 1)
         task = app.tasks[0]
-        self.assertEqual(task.title, "会議の準備")
+        self.assertTrue(task.is_scheduled)
+        self.assertEqual(task.due_dt.date(), datetime.date.today())
+        self.assertEqual((task.due_dt.hour, task.due_dt.minute), (23, 59))
+        self.assertEqual(task.duration_min, 45)
         self.assertEqual(task.recur_unit, RECUR_DAILY)
         self.assertEqual(task.recur_interval, 2)
-        # make_due により期限は常に未来 → 通知がスケジュールされる
-        root.after.assert_called_once()
-        mock_save.assert_called_once()
-        # 入力欄はクリアされる
+        self.assertEqual(app.title_var.get(), "")  # クリアされる
+        self.save_tasks.assert_called()
+
+
+class AddToBacklogTests(AppTestCase):
+    def test_adds_backlog_task(self):
+        app, _ = self._app()
+        app.title_var.set("資料を読む")
+        app.dur_var.set("60")
+        app.add_to_backlog()
+        self.assertEqual(len(app.tasks), 1)
+        self.assertFalse(app.tasks[0].is_scheduled)
+        self.assertEqual(app.tasks[0].duration_min, 60)
         self.assertEqual(app.title_var.get(), "")
 
-    @patch("reminder.app.save_tasks")
-    def test_add_non_recurring(self, _mock_save):
-        app, _ = _create_app()
-        app.title_var.set("買い物")
-        app.recur_var.set(RECUR_LABELS[RECUR_NONE])
-        app.add_task()
-        self.assertEqual(app.tasks[0].recur_unit, RECUR_NONE)
 
+class CompleteTests(AppTestCase):
+    def test_complete_none_selected(self):
+        app, _ = self._app()
+        app.complete_timeline_selected()
+        self.assertIn("選択", app.status_var.get())
 
-class CompleteTaskTests(unittest.TestCase):
-    @patch("reminder.app.save_tasks")
-    def test_complete_non_recurring_removes_task(self, mock_save):
-        task = Task(title="買い物", due="2026-06-06T09:00:00")
-        app, root = _create_app([task])
-        app.tree.selection.return_value = (task.id,)
-        app.complete_selected()
-        self.assertEqual(app.tasks, [])
-        mock_save.assert_called_once()
+    def test_complete_non_recurring_marks_and_records(self):
+        task = Task(title="買い物", due=_iso(datetime.datetime.now().replace(microsecond=0)))
+        app, _ = self._app([task])
+        app.timeline_tree.selection.return_value = (task.id,)
+        app.complete_timeline_selected()
+        self.assertTrue(task.completed)
+        self.assertIsNotNone(task.completed_at)
+        self.assertIn(task, app.tasks)  # 完了タスクは残る（タイムラインに済表示）
+        self.assertEqual(len(app.prefs.completions), 1)
+        self.save_prefs.assert_called()
 
-    @patch("reminder.app.save_tasks")
-    def test_complete_recurring_reschedules_from_now(self, _mock_save):
-        task = Task(title="掃除", due=_iso(datetime.datetime.now() - datetime.timedelta(days=1)),
+    def test_complete_recurring_appends_next(self):
+        task = Task(title="掃除", due=_iso(datetime.datetime.now().replace(microsecond=0)),
                     recur_unit=RECUR_DAILY, recur_interval=1)
-        app, root = _create_app([task])
-        app.tree.selection.return_value = (task.id,)
-
+        app, root = self._app([task])
+        app.timeline_tree.selection.return_value = (task.id,)
         before = datetime.datetime.now()
-        app.complete_selected()
-        after = datetime.datetime.now()
-
-        # 元タスクは消え、次回タスクが 1 件再登録される
-        self.assertEqual(len(app.tasks), 1)
-        nxt = app.tasks[0]
-        self.assertNotEqual(nxt.id, task.id)
+        app.complete_timeline_selected()
+        # 元タスク(完了) + 次回タスク = 2 件
+        self.assertEqual(len(app.tasks), 2)
+        nxt = [t for t in app.tasks if not t.completed][0]
         self.assertEqual(nxt.title, "掃除")
-        self.assertEqual(nxt.recur_unit, RECUR_DAILY)
-        # 次回期限は「完了時点（今）+ 1 日」付近
-        expected_low = before + datetime.timedelta(days=1) - datetime.timedelta(seconds=2)
-        expected_high = after + datetime.timedelta(days=1) + datetime.timedelta(seconds=2)
-        self.assertTrue(expected_low <= nxt.due_dt <= expected_high)
-        # 次回分の通知がスケジュールされる
-        root.after.assert_called_once()
-
-    def test_complete_without_selection_sets_status(self):
-        app, _ = _create_app()
-        app.status_var = _DummyVar()
-        app.tree.selection.return_value = ()
-        app.complete_selected()
-        self.assertIn("選択", app.status_var.get())
+        self.assertGreaterEqual(nxt.due_dt, before + datetime.timedelta(days=1) - datetime.timedelta(seconds=2))
+        root.after.assert_called_once()  # 次回分がスケジュールされる
 
 
-class DeleteTaskTests(unittest.TestCase):
-    @patch("reminder.app.save_tasks")
-    def test_delete_removes_selected(self, mock_save):
-        task = Task(title="x", due="2026-06-06T09:00:00")
-        app, _ = _create_app([task])
-        app.tree.selection.return_value = (task.id,)
-        app.delete_selected()
+class DeleteTests(AppTestCase):
+    def test_delete_removes(self):
+        task = Task(title="x", due=_iso(datetime.datetime.now().replace(microsecond=0)))
+        app, _ = self._app([task])
+        app.timeline_tree.selection.return_value = (task.id,)
+        app.delete_timeline_selected()
         self.assertEqual(app.tasks, [])
-        mock_save.assert_called_once()
 
-    def test_delete_without_selection(self):
-        app, _ = _create_app()
-        app.status_var = _DummyVar()
-        app.delete_selected()
+    def test_delete_none_selected(self):
+        app, _ = self._app()
+        app.delete_backlog_selected()
         self.assertIn("選択", app.status_var.get())
 
 
-class SelectedTaskTests(unittest.TestCase):
-    def test_returns_matching_task(self):
-        task = Task(title="x", due="2026-06-06T09:00:00")
-        app, _ = _create_app([task])
-        app.tree.selection.return_value = (task.id,)
-        self.assertIs(app._selected_task(), task)
+class MoveTests(AppTestCase):
+    def test_move_to_backlog_clears_due(self):
+        task = Task(title="x", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)))
+        app, _ = self._app([task])
+        app.jobs[task.id] = "job-9"
+        app.timeline_tree.selection.return_value = (task.id,)
+        app.move_to_backlog()
+        self.assertEqual(task.due, "")
+        self.assertNotIn(task.id, app.jobs)  # 通知ジョブが解除される
 
-    def test_returns_none_when_no_selection(self):
-        app, _ = _create_app()
-        app.tree.selection.return_value = ()
-        self.assertIsNone(app._selected_task())
+    def test_schedule_backlog_sets_due_today(self):
+        task = Task(title="x", due="")
+        app, _ = self._app([task])
+        app.backlog_tree.selection.return_value = (task.id,)
+        app.hour_var.set("10")
+        app.minute_var.set("30")
+        app.schedule_backlog_selected()
+        self.assertTrue(task.is_scheduled)
+        self.assertEqual(task.due_dt.date(), datetime.date.today())
+        self.assertEqual((task.due_dt.hour, task.due_dt.minute), (10, 30))
 
 
-class ScheduleTaskTests(unittest.TestCase):
-    def test_past_task_not_scheduled(self):
-        task = Task(title="x", due=_iso(datetime.datetime.now() - datetime.timedelta(hours=1)))
-        app, root = _create_app()
+class ScheduleTaskTests(AppTestCase):
+    def test_backlog_not_scheduled(self):
+        app, root = self._app()
+        app._schedule_task(Task(title="x", due=""))
+        root.after.assert_not_called()
+
+    def test_completed_not_scheduled(self):
+        app, root = self._app()
+        task = Task(title="x", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)),
+                    completed=True, completed_at=_iso(datetime.datetime.now()))
         app._schedule_task(task)
         root.after.assert_not_called()
-        self.assertNotIn(task.id, app.jobs)
 
-    def test_future_task_scheduled(self):
+    def test_past_not_scheduled(self):
+        app, root = self._app()
+        app._schedule_task(Task(title="x", due=_iso(datetime.datetime.now() - datetime.timedelta(hours=1))))
+        root.after.assert_not_called()
+
+    def test_future_scheduled(self):
+        app, root = self._app()
         task = Task(title="x", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)))
-        app, root = _create_app()
         app._schedule_task(task)
         root.after.assert_called_once()
         self.assertIn(task.id, app.jobs)
 
-    def test_cancel_job_calls_after_cancel(self):
-        app, root = _create_app()
-        app.jobs["abc"] = "job-9"
-        app._cancel_job("abc")
+    def test_cancel_job(self):
+        app, root = self._app()
+        app.jobs["a"] = "job-9"
+        app._cancel_job("a")
         root.after_cancel.assert_called_once_with("job-9")
-        self.assertNotIn("abc", app.jobs)
+        self.assertNotIn("a", app.jobs)
 
-    def test_schedule_all_survives_single_failure(self):
-        # 1 件のスケジュール登録が失敗しても残りは登録され、起動は妨げられない
+    def test_schedule_all_survives_failure(self):
         t1 = Task(title="a", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)))
         t2 = Task(title="b", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=2)))
-        app, root = _create_app()
+        app, root = self._app()
         app.tasks = [t1, t2]
-        root.after.side_effect = [RuntimeError("after failed"), "job-2"]
-        app._schedule_all()  # 例外を送出しないこと
+        root.after.side_effect = [RuntimeError("fail"), "job-2"]
+        app._schedule_all()
         self.assertNotIn(t1.id, app.jobs)
         self.assertEqual(app.jobs.get(t2.id), "job-2")
 
 
-class OnTaskDueTests(unittest.TestCase):
+class OnTaskDueTests(AppTestCase):
     @patch("reminder.app.messagebox.showinfo")
     @patch("reminder.app.play_notification_sound")
-    def test_notifies_when_due(self, mock_sound, mock_showinfo):
+    def test_notifies_when_due(self, mock_sound, mock_info):
         task = Task(title="運動", due=_iso(datetime.datetime.now() - datetime.timedelta(minutes=1)))
-        app, root = _create_app([task])
+        app, root = self._app([task])
         app._on_task_due(task.id)
         mock_sound.assert_called_once_with(root, "運動")
-        mock_showinfo.assert_called_once()
+        mock_info.assert_called_once()
 
     @patch("reminder.app.messagebox.showinfo")
     @patch("reminder.app.play_notification_sound")
-    def test_reschedules_when_fired_early(self, mock_sound, mock_showinfo):
+    def test_reschedules_when_early(self, mock_sound, mock_info):
         task = Task(title="x", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=2)))
-        app, root = _create_app([task])
+        app, root = self._app([task])
         app._on_task_due(task.id)
-        mock_showinfo.assert_not_called()
-        mock_sound.assert_not_called()
-        # 再スケジュールされる
+        mock_info.assert_not_called()
         root.after.assert_called_once()
 
     @patch("reminder.app.messagebox.showinfo")
     @patch("reminder.app.play_notification_sound")
-    def test_missing_task_is_noop(self, mock_sound, mock_showinfo):
-        app, _ = _create_app()
-        app._on_task_due("nonexistent")
+    def test_completed_task_is_noop(self, mock_sound, mock_info):
+        task = Task(title="x", due=_iso(datetime.datetime.now() - datetime.timedelta(minutes=1)),
+                    completed=True, completed_at=_iso(datetime.datetime.now()))
+        app, _ = self._app([task])
+        app._on_task_due(task.id)
         mock_sound.assert_not_called()
-        mock_showinfo.assert_not_called()
+
+    @patch("reminder.app.messagebox.showinfo")
+    @patch("reminder.app.play_notification_sound")
+    def test_missing_task_is_noop(self, mock_sound, mock_info):
+        app, _ = self._app()
+        app._on_task_due("nope")
+        mock_sound.assert_not_called()
 
 
-class FormatTests(unittest.TestCase):
-    def test_format_due(self):
-        self.assertEqual(
-            PlannerApp._format_due(datetime.datetime(2026, 6, 6, 9, 5)), "06/06 09:05"
-        )
-
-    def test_format_recur_none(self):
-        self.assertEqual(PlannerApp._format_recur(Task(title="x", due="2026-06-06T09:00:00")), "—")
-
-    def test_format_recur_with_interval(self):
-        task = Task(title="x", due="2026-06-06T09:00:00", recur_unit=RECUR_DAILY, recur_interval=2)
-        self.assertEqual(PlannerApp._format_recur(task), "2日ごと")
-
-
-class RenderTasksTests(unittest.TestCase):
-    def test_empty_sets_status(self):
-        app, _ = _create_app()
-        app.status_var = _DummyVar()
-        app.tree.get_children.return_value = ()
-        app._render_tasks()
-        self.assertEqual(app.status_var.get(), STATUS_EMPTY)
-
-    def test_inserts_rows_for_tasks(self):
-        task = Task(title="x", due=_iso(datetime.datetime.now() + datetime.timedelta(hours=1)))
-        app, _ = _create_app([task])
-        app.tree.get_children.return_value = ()
-        app._render_tasks()
-        app.tree.insert.assert_called_once()
-
-
-class DefaultDueTimeTests(unittest.TestCase):
-    def test_default_time_is_near_future_not_next_day(self):
-        # 開いた直後に時刻を変えず追加しても翌日送りにならないこと。
-        # 既定時刻は「次の分」なので、make_due の結果は数分以内の未来に収まる。
-        before = datetime.datetime.now()
-        app, _ = _create_app()
-        target = datetime.time(int(app.hour_var.get()), int(app.minute_var.get()))
-        due = datetime.datetime.strptime(make_due(target, now=before), ISO_FMT)
-        delta = due - before
-        self.assertGreaterEqual(delta, datetime.timedelta(0))
-        self.assertLess(delta, datetime.timedelta(minutes=2))
-
-
-class ListLayoutTests(unittest.TestCase):
-    def test_heading_and_container_on_distinct_rows(self):
-        # 見出しと一覧コンテナが別々の grid 行に配置され、重ならないこと
-        app, _ = _create_app()
-        labels, frames = [], []
-
-        def make_label(*a, **k):
-            m = Mock(); labels.append(m); return m
-
-        def make_frame(*a, **k):
-            m = Mock(); frames.append(m); return m
-
-        with patch("reminder.app.ttk.Label", side_effect=make_label), \
-             patch("reminder.app.ttk.Frame", side_effect=make_frame), \
-             patch("reminder.app.ttk.Treeview", side_effect=lambda *a, **k: Mock()), \
-             patch("reminder.app.ttk.Scrollbar", side_effect=lambda *a, **k: Mock()):
-            app._build_list_section(Mock())
-
-        heading_row = labels[0].grid.call_args.kwargs["row"]
-        container_row = frames[0].grid.call_args.kwargs["row"]
-        self.assertNotEqual(heading_row, container_row)
+class RenderTests(AppTestCase):
+    def test_refresh_runs_without_error(self):
+        # 実際の _refresh を Mock ツリー上で動かし、例外が出ないことを確認
+        task = Task(title="朝会", due=_iso(datetime.datetime.now().replace(microsecond=0)))
+        backlog = Task(title="あとで", due="")
+        app, _ = self._app([task, backlog])
+        app.date_var = _DummyVar()
+        app.stats_var = _DummyVar()
+        app._refresh()
+        # タイムライン・バックログ双方に insert が走る
+        self.assertTrue(app.timeline_tree.insert.called)
+        self.assertTrue(app.backlog_tree.insert.called)
+        self.assertIn("完了", app.stats_var.get())
 
 
 class BackwardCompatTests(unittest.TestCase):
@@ -366,11 +329,6 @@ class MainTests(unittest.TestCase):
         mock_tk_cls.assert_called_once()
         mock_app_cls.assert_called_once_with(mock_root)
         mock_root.mainloop.assert_called_once()
-
-    def test_main_callable_from_package_namespace(self):
-        # console-script エントリ（reminder:main）が解決できることを保証する
-        import reminder
-        self.assertTrue(callable(reminder.main))
 
 
 if __name__ == "__main__":

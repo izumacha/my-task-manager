@@ -3,7 +3,45 @@ import datetime
 import unittest
 
 from reminder.recurrence import RECUR_DAILY, RECUR_MONTHLY, RECUR_NONE
-from reminder.task import ISO_FMT, Task, build_next_task, make_due
+from reminder.task import (
+    DEFAULT_DURATION,
+    ISO_FMT,
+    MAX_DURATION,
+    MIN_DURATION,
+    Task,
+    build_next_task,
+    make_due,
+)
+
+
+class DurationAndBacklogTests(unittest.TestCase):
+    def test_default_duration(self):
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00").duration_min, DEFAULT_DURATION)
+
+    def test_duration_clamped(self):
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", duration_min=1).duration_min, MIN_DURATION)
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", duration_min=99999).duration_min, MAX_DURATION)
+
+    def test_duration_non_numeric_defaults(self):
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", duration_min="ab").duration_min, DEFAULT_DURATION)
+
+    def test_backlog_task_is_not_scheduled(self):
+        t = Task(title="あとで", due="")
+        self.assertFalse(t.is_scheduled)
+        with self.assertRaises(ValueError):
+            _ = t.due_dt
+
+    def test_default_due_is_backlog(self):
+        self.assertFalse(Task(title="あとで").is_scheduled)
+
+    def test_scheduled_task_end_dt(self):
+        t = Task(title="x", due="2026-06-06T09:00:00", duration_min=90)
+        self.assertTrue(t.is_scheduled)
+        self.assertEqual(t.end_dt, datetime.datetime(2026, 6, 6, 10, 30))
+
+    def test_to_dict_round_trip_carries_duration(self):
+        t = Task(title="x", due="2026-06-06T09:00:00", duration_min=45)
+        self.assertEqual(Task.from_dict(t.to_dict()).duration_min, 45)
 
 
 class TaskModelTests(unittest.TestCase):
@@ -83,6 +121,12 @@ class MakeDueTests(unittest.TestCase):
         due = make_due(datetime.time(23, 59), now=now)
         datetime.datetime.strptime(due, ISO_FMT)  # 例外が出ないこと
 
+    def test_no_roll_keeps_today_even_if_past(self):
+        # roll_if_past=False のとき、過去時刻でも当日に配置される
+        now = datetime.datetime(2026, 6, 6, 10, 0)
+        due = make_due(datetime.time(9, 0), now=now, roll_if_past=False)
+        self.assertEqual(due, "2026-06-06T09:00:00")
+
 
 class BuildNextTaskTests(unittest.TestCase):
     def test_non_recurring_returns_none(self):
@@ -110,6 +154,11 @@ class BuildNextTaskTests(unittest.TestCase):
         t = Task(title="x", due="2026-06-06T09:00:00", recur_unit=RECUR_DAILY)
         nxt = build_next_task(t, datetime.datetime(2026, 6, 6, 9, 0))
         self.assertNotEqual(nxt.id, t.id)
+
+    def test_next_task_carries_duration(self):
+        t = Task(title="x", due="2026-06-06T09:00:00", duration_min=75, recur_unit=RECUR_DAILY)
+        nxt = build_next_task(t, datetime.datetime(2026, 6, 6, 9, 0))
+        self.assertEqual(nxt.duration_min, 75)
 
 
 if __name__ == "__main__":
