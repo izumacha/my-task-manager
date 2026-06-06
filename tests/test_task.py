@@ -43,6 +43,16 @@ class DurationAndBacklogTests(unittest.TestCase):
         t = Task(title="x", due="2026-06-06T09:00:00", duration_min=45)
         self.assertEqual(Task.from_dict(t.to_dict()).duration_min, 45)
 
+    def test_empty_title_raises(self):
+        with self.assertRaises(ValueError):
+            Task(title="", due="2026-06-06T09:00:00")
+        with self.assertRaises(ValueError):
+            Task(title="   ", due="2026-06-06T09:00:00")
+
+    def test_non_string_title_raises(self):
+        with self.assertRaises(ValueError):
+            Task(title=123, due="2026-06-06T09:00:00")
+
 
 class TaskModelTests(unittest.TestCase):
     def test_defaults(self):

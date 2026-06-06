@@ -102,6 +102,18 @@ def scheduled_on(tasks: list[Task], date: datetime.date) -> list[Task]:
     return sorted(todays, key=lambda t: t.due_dt)
 
 
+def scheduled_in_window(
+    tasks: list[Task], start: datetime.datetime, end: datetime.datetime
+) -> list[Task]:
+    """[start, end) の窓に開始するスケジュール済みタスクを開始順で返す。
+
+    就寝が翌日にまわる夜間レンジ（例: 起床 09:00 / 就寝 01:00）でも、窓内に
+    開始するタスク（例: 翌 00:30）を取りこぼさない。
+    """
+    inside = [t for t in tasks if t.is_scheduled and start <= t.due_dt < end]
+    return sorted(inside, key=lambda t: t.due_dt)
+
+
 def build_day_timeline(
     tasks: list[Task],
     date: datetime.date,
@@ -126,7 +138,9 @@ def build_day_timeline(
     """
     now = now or datetime.datetime.now()
     day_start, day_end = day_bounds(date, wake_min, sleep_min)
-    todays = scheduled_on(tasks, date)
+    # 表示する時間窓 [day_start, day_end) で抽出する。夜間レンジで翌日に
+    # まわる就寝境界までのタスク（例: 00:30）も含める。
+    todays = scheduled_in_window(tasks, day_start, day_end)
 
     rows: list[TimelineRow] = []
     cursor = day_start
@@ -160,6 +174,26 @@ def free_minutes_today(
         for row in build_day_timeline(tasks, date, wake_min, sleep_min, now)
         if row.kind == ROW_FREE
     )
+
+
+def max_free_slot(
+    tasks: list[Task],
+    date: datetime.date,
+    wake_min: int = DEFAULT_WAKE_MIN,
+    sleep_min: int = DEFAULT_SLEEP_MIN,
+    now: datetime.datetime | None = None,
+) -> int:
+    """指定日で最も長い「連続した」空き時間（分）を返す。
+
+    タスクの提案は合計ではなくこの最大連続枠を基準にすべき。合計に空きが
+    あっても、個々の枠に収まらないタスクは実際には置けないため。
+    """
+    frees = [
+        row.minutes
+        for row in build_day_timeline(tasks, date, wake_min, sleep_min, now)
+        if row.kind == ROW_FREE
+    ]
+    return max(frees, default=0)
 
 
 def backlog_tasks(tasks: list[Task]) -> list[Task]:

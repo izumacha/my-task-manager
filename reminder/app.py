@@ -54,6 +54,7 @@ from .timeline import (
     format_duration,
     free_minutes_today,
     hhmm_to_min,
+    max_free_slot,
     min_to_hhmm,
     prune_old_completed,
     suggest_for_free_time,
@@ -85,10 +86,12 @@ class PlannerApp:
         carry_over_overdue(self.tasks, today)
         self._persist_tasks()
 
-        now = datetime.datetime.now()
+        # 既定開始時刻は「次の 5 分刻み」。分が繰り上がるときは時・日も繰り上げ、
+        # 過去時刻が初期値にならないようにする（add_to_timeline は当日固定のため）。
+        start = self._default_start(datetime.datetime.now())
         self.title_var = tk.StringVar()
-        self.hour_var = tk.StringVar(value=f"{now.hour:02d}")
-        self.minute_var = tk.StringVar(value=f"{(now.minute // 5 + 1) * 5 % 60:02d}")
+        self.hour_var = tk.StringVar(value=f"{start.hour:02d}")
+        self.minute_var = tk.StringVar(value=f"{start.minute:02d}")
         self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))
         self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])
         self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))
@@ -103,6 +106,12 @@ class PlannerApp:
         self._schedule_all()
 
     # ------------------------------------------------------------ 設定アクセス
+
+    @staticmethod
+    def _default_start(now: datetime.datetime) -> datetime.datetime:
+        """既定の開始時刻（次の 5 分刻み）を返す。時・日も適切に繰り上げる。"""
+        add = 5 - (now.minute % 5)  # 1〜5（既に 5 分刻みなら 5 分後）
+        return (now + datetime.timedelta(minutes=add)).replace(second=0, microsecond=0)
 
     def _wake_min(self) -> int:
         """設定の起床時刻を分で返す（不正値は既定値）。"""
@@ -396,6 +405,11 @@ class PlannerApp:
         if task is None:
             self.status_var.set("完了するタスクを選択してください。")
             return
+        if task.completed:
+            # 完了済みタスクはタイムラインに残るため、再度押下されても
+            # 統計の二重計上や繰り返しタスクの重複生成を防ぐ。
+            self.status_var.set(f"「{task.title}」は既に完了しています。")
+            return
         completed_at = datetime.datetime.now()
         self._cancel_job(task.id)
         task.completed = True
@@ -494,9 +508,11 @@ class PlannerApp:
         tree = self.backlog_tree
         for item in tree.get_children():
             tree.delete(item)
-        free = free_minutes_today(self.tasks, datetime.date.today(),
-                                  self._wake_min(), self._sleep_min())
-        suggestions = {t.id for t in suggest_for_free_time(self.tasks, free)}
+        # 提案は「最大連続空き枠」に収まるものに限る（合計空きでは個々の枠に
+        # 置けないタスクまで提案してしまい誤解を招くため）。
+        slot = max_free_slot(self.tasks, datetime.date.today(),
+                             self._wake_min(), self._sleep_min())
+        suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}
         for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:
             tags = ("suggest",) if task.id in suggestions else ()
             tree.insert("", tk.END, iid=task.id,

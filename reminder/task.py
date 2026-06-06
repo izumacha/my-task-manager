@@ -78,6 +78,11 @@ class Task:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __post_init__(self) -> None:
+        # タスク名は非空の文字列でなければならない。非文字列・空は壊れたタスクとして
+        # 例外を送出し、load_tasks() 側の個別 try-except でスキップさせる
+        # （後段の "✓ " + title や通知でのクラッシュを防ぐ）。
+        if not isinstance(self.title, str) or not self.title.strip():
+            raise ValueError(f"タスク名が不正です: {self.title!r}")
         # 不正な単位・間隔・所要時間は安全側へ正規化する
         if self.recur_unit not in RECUR_UNITS:
             self.recur_unit = RECUR_NONE

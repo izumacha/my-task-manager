@@ -17,6 +17,7 @@ from reminder.timeline import (
     format_duration,
     free_minutes_today,
     hhmm_to_min,
+    max_free_slot,
     min_to_hhmm,
     prune_old_completed,
     scheduled_on,
@@ -117,6 +118,38 @@ class BuildTimelineTests(unittest.TestCase):
         tasks = [_t("朝会", "2026-06-06T09:00:00", 60)]
         # 16時間(960分) - 60分 = 900分
         self.assertEqual(free_minutes_today(tasks, self.today, 7 * 60, 23 * 60, self.now), 900)
+
+    def test_overnight_window_includes_next_day_task(self):
+        # 起床 09:00 / 就寝 01:00（翌日）。翌 00:30 のタスクも窓内として含める
+        tasks = [_t("夜更かし作業", "2026-06-07T00:30:00", 30)]
+        rows = build_day_timeline(tasks, self.today, 9 * 60, 1 * 60, self.now)
+        titles = [r.task.title for r in rows if r.kind == ROW_TASK]
+        self.assertIn("夜更かし作業", titles)
+
+
+class MaxFreeSlotTests(unittest.TestCase):
+    def setUp(self):
+        self.today = datetime.date(2026, 6, 6)
+        self.now = datetime.datetime(2026, 6, 6, 7, 0)
+
+    def test_max_contiguous_slot(self):
+        # 09:00-09:30 と 10:00-10:30 のタスクで 09:30-10:00 に 30 分の枠ができる。
+        # ただし最大連続枠は就寝までの末尾（10:30-23:00）。
+        tasks = [_t("a", "2026-06-06T09:00:00", 30), _t("b", "2026-06-06T10:00:00", 30)]
+        # 末尾 10:30-23:00 = 750分 が最大
+        self.assertEqual(max_free_slot(tasks, self.today, 7 * 60, 23 * 60, self.now), 750)
+
+    def test_no_60min_slot_between_two_30min_gaps(self):
+        # 1日を 30 分枠だけにする: 07:00 から 30 分タスクと 30 分空きを交互に。
+        tasks = [
+            _t("t1", "2026-06-06T07:30:00", 30),  # 07:00-07:30 空き(30)
+            _t("t2", "2026-06-06T08:30:00", 870),  # 08:00-08:30 空き(30), 以降就寝まで埋める
+        ]
+        # 最大連続空きは 30 分なので、60 分タスクは収まらない
+        self.assertEqual(max_free_slot(tasks, self.today, 7 * 60, 23 * 60, self.now), 30)
+        fitting = suggest_for_free_time(
+            [Task(title="長", due="", duration_min=60)], 30)
+        self.assertEqual(fitting, [])
 
 
 class ScheduledOnTests(unittest.TestCase):

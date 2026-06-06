@@ -151,11 +151,42 @@ class AddToBacklogTests(AppTestCase):
         self.assertEqual(app.title_var.get(), "")
 
 
+class DefaultStartTests(unittest.TestCase):
+    def test_rounds_up_to_next_5_min(self):
+        self.assertEqual(PlannerApp._default_start(datetime.datetime(2026, 6, 6, 10, 31)),
+                         datetime.datetime(2026, 6, 6, 10, 35))
+
+    def test_carries_hour_when_minute_wraps(self):
+        # 10:57 → 11:00（時が繰り上がる）。過去時刻にならない。
+        self.assertEqual(PlannerApp._default_start(datetime.datetime(2026, 6, 6, 10, 57)),
+                         datetime.datetime(2026, 6, 6, 11, 0))
+
+    def test_on_5_min_boundary_advances_by_5(self):
+        self.assertEqual(PlannerApp._default_start(datetime.datetime(2026, 6, 6, 10, 30, 12)),
+                         datetime.datetime(2026, 6, 6, 10, 35))
+
+    def test_carries_day_at_end_of_day(self):
+        self.assertEqual(PlannerApp._default_start(datetime.datetime(2026, 6, 6, 23, 58)),
+                         datetime.datetime(2026, 6, 7, 0, 0))
+
+
 class CompleteTests(AppTestCase):
     def test_complete_none_selected(self):
         app, _ = self._app()
         app.complete_timeline_selected()
         self.assertIn("選択", app.status_var.get())
+
+    def test_complete_already_completed_is_noop(self):
+        task = Task(title="済タスク", due=_iso(datetime.datetime.now().replace(microsecond=0)),
+                    recur_unit=RECUR_DAILY, completed=True,
+                    completed_at=_iso(datetime.datetime.now()))
+        app, _ = self._app([task])
+        app.timeline_tree.selection.return_value = (task.id,)
+        app.complete_timeline_selected()
+        # 統計に二重計上されず、繰り返しの重複生成もない
+        self.assertEqual(len(app.prefs.completions), 0)
+        self.assertEqual(len(app.tasks), 1)
+        self.assertIn("既に完了", app.status_var.get())
 
     def test_complete_non_recurring_marks_and_records(self):
         task = Task(title="買い物", due=_iso(datetime.datetime.now().replace(microsecond=0)))

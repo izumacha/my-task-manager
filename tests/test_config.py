@@ -159,6 +159,20 @@ class TaskPersistenceTests(unittest.TestCase):
             self.assertIsInstance(loaded[0].id, str)
             self.assertNotEqual(loaded[0].id, 123)
 
+    def test_load_skips_non_string_title(self):
+        # タイトルが非文字列の壊れたエントリはスキップされる
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")
+            with open(tasks_path, "w", encoding="utf-8") as f:
+                json.dump([
+                    {"title": "ok", "due": "2026-06-06T09:00:00"},
+                    {"title": 123, "due": "2026-06-07T09:00:00"},
+                    {"title": "", "due": "2026-06-08T09:00:00"},
+                ], f)
+            with patch("reminder.config._TASKS_PATH", tasks_path):
+                loaded = load_tasks()
+            self.assertEqual([t.title for t in loaded], ["ok"])
+
     def test_load_invalid_json_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tasks_path = os.path.join(tmpdir, "tasks.json")
