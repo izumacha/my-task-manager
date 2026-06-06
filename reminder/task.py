@@ -88,6 +88,11 @@ class Task:
             self.recur_unit = RECUR_NONE
         self.recur_interval = _coerce_interval(self.recur_interval)
         self.duration_min = _coerce_duration(self.duration_min)
+        # completed は厳密な真偽値に正規化する。tasks.json の手編集等で
+        # 文字列 "false"（真値）が入ると、未完了タスクが完了扱いになり通知も
+        # 完了記録も行われない「死んだタスク」になってしまうため、実際の
+        # True 以外はすべて未完了として扱う。
+        self.completed = self.completed is True
         # due が空文字（あとでやる）の場合は検証しない。
         # 非空の場合のみ、パースできない値は不正なタスクとして例外を送出する。
         # これにより load_tasks() 側の個別 try-except で 1 件だけスキップでき、

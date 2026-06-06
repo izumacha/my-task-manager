@@ -188,12 +188,20 @@ def free_minutes_today(
     sleep_min: int = DEFAULT_SLEEP_MIN,
     now: datetime.datetime | None = None,
 ) -> int:
-    """指定日の空き時間（分）の合計を返す。"""
-    return sum(
-        row.minutes
-        for row in build_day_timeline(tasks, date, wake_min, sleep_min, now)
-        if row.kind == ROW_FREE
-    )
+    """指定日の空き時間（分）の合計を返す。
+
+    窓拡張で生じた起床前・就寝後の時間は「空き」に数えない（設定された
+    起床〜就寝の窓 [day_start, day_end] に重なる部分のみを対象とする）。
+    """
+    day_start, day_end = day_bounds(date, wake_min, sleep_min)
+    total = 0
+    for row in build_day_timeline(tasks, date, wake_min, sleep_min, now):
+        if row.kind != ROW_FREE:
+            continue
+        s, e = max(row.start, day_start), min(row.end, day_end)
+        if e > s:
+            total += int((e - s).total_seconds() // 60)
+    return total
 
 
 def max_free_slot(
@@ -207,15 +215,19 @@ def max_free_slot(
 
     タスクの提案は合計ではなくこの最大連続枠を基準にすべき。合計に空きが
     あっても個々の枠に収まらないタスクは置けないため。さらに、既に経過した
-    時間は除外する（now より前の空きは使えないので、now でクリップする）。
+    時間と窓外（起床前・就寝後）は除外する。すなわち各空き行を
+    [max(now, 起床), 就寝] にクリップして測る。
     """
     now = now or datetime.datetime.now()
+    day_start, day_end = day_bounds(date, wake_min, sleep_min)
+    lower = max(day_start, now)
     best = 0
     for row in build_day_timeline(tasks, date, wake_min, sleep_min, now):
         if row.kind != ROW_FREE:
             continue
-        usable = int((row.end - max(row.start, now)).total_seconds() // 60)
-        best = max(best, usable)
+        s, e = max(row.start, lower), min(row.end, day_end)
+        if e > s:
+            best = max(best, int((e - s).total_seconds() // 60))
     return best
 
 

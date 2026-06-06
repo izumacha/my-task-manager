@@ -53,6 +53,16 @@ class DurationAndBacklogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Task(title=123, due="2026-06-06T09:00:00")
 
+    def test_completed_coerced_to_strict_bool(self):
+        # 文字列 "false"（Python では真値）は完了扱いにしない
+        self.assertFalse(Task(title="x", due="2026-06-06T09:00:00", completed="false").completed)
+        self.assertFalse(Task(title="x", due="2026-06-06T09:00:00", completed=1).completed)
+        self.assertTrue(Task(title="x", due="2026-06-06T09:00:00", completed=True).completed)
+
+    def test_from_dict_completed_string_is_not_done(self):
+        t = Task.from_dict({"title": "x", "due": "2026-06-06T09:00:00", "completed": "false"})
+        self.assertFalse(t.completed)
+
 
 class TaskModelTests(unittest.TestCase):
     def test_defaults(self):

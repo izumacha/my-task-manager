@@ -120,6 +120,12 @@ class BuildTimelineTests(unittest.TestCase):
         # 16時間(960分) - 60分 = 900分
         self.assertEqual(free_minutes_today(tasks, self.today, 7 * 60, 23 * 60, self.now), 900)
 
+    def test_free_minutes_excludes_off_hours(self):
+        # 就寝 23:00 の後（23:15）にタスクがあっても、窓外（23:00〜23:15）は
+        # 空きに数えない。空きは 07:00〜23:00 = 960 分のみ。
+        tasks = [_t("夜の作業", "2026-06-06T23:15:00", 30)]
+        self.assertEqual(free_minutes_today(tasks, self.today, 7 * 60, 23 * 60, self.now), 960)
+
     def test_overnight_window_includes_next_day_task(self):
         # 起床 09:00 / 就寝 01:00（翌日）。翌 00:30 のタスクも窓内として含める
         tasks = [_t("夜更かし作業", "2026-06-07T00:30:00", 30)]
@@ -185,6 +191,13 @@ class MaxFreeSlotTests(unittest.TestCase):
         today = datetime.date(2026, 6, 6)
         now = datetime.datetime(2026, 6, 6, 20, 0)
         self.assertEqual(max_free_slot([], today, 7 * 60, 23 * 60, now), 180)
+
+    def test_off_hours_excluded_from_slot(self):
+        # 就寝 23:00 後の 23:15 タスクがあっても、最大空きは窓内 07:00-23:00 = 960。
+        today = datetime.date(2026, 6, 6)
+        now = datetime.datetime(2026, 6, 6, 7, 0)
+        tasks = [_t("夜の作業", "2026-06-06T23:15:00", 30)]
+        self.assertEqual(max_free_slot(tasks, today, 7 * 60, 23 * 60, now), 960)
 
     def test_no_60min_slot_between_two_30min_gaps(self):
         # 1日を 30 分枠だけにする: 07:00 から 30 分タスクと 30 分空きを交互に。
