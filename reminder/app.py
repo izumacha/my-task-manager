@@ -34,6 +34,7 @@ from .recurrence import (
     unit_for_label,
 )
 from .stats import completed_count_on, current_streak
+from . import theme
 from .task import (
     DEFAULT_DURATION,
     ISO_FMT,
@@ -44,13 +45,13 @@ from .task import (
     make_due,
 )
 from .timeline import (
-    ROW_FREE,
     ROW_TASK,
     STATUS_DONE,
     STATUS_NOW,
     STATUS_PAST,
     build_day_timeline,
     carry_over_overdue,
+    day_bounds,
     format_duration,
     free_minutes_today,
     hhmm_to_min,
@@ -80,6 +81,13 @@ class PlannerApp:
         self.tasks: list[Task] = load_tasks()
         self.prefs: Prefs = load_prefs()
         self.jobs: dict[str, str] = {}
+
+        # カレンダー（デイビュー）の選択状態と描画幅。
+        # 選択は Treeview ではなく「クリックされたブロックの task.id」で管理する。
+        self._tl_selected: str | None = None
+        self._tl_width: int = 460  # <Configure> で実幅に更新する
+        # クリック判定用のブロック矩形（_render_timeline で毎回作り直す）。
+        self._tl_blocks: list = []
 
         # 起動時・再描画時の整理（前日以前の完了破棄・未完了の繰り越し）は
         # _refresh() 内の _roll_over() に集約している。
@@ -132,27 +140,92 @@ class PlannerApp:
 
     # ------------------------------------------------------------------ UI 構築
 
+    def _apply_style(self) -> None:
+        """ttk スタイルを theme モジュールのトークンで一括設定する。
+
+        TimeTree 風のポップな配色を実現するため、最も自由に色を変えられる
+        ``clam`` テーマを基盤に選ぶ。色・フォントの実値はすべて
+        :mod:`reminder.theme` 側に定義し、ここでは割り当てるだけにする。
+        """
+        style = ttk.Style()
+        available = style.theme_names()
+        # clam は配色を細かく変更できるため最優先。無い環境では既存テーマで継続。
+        for base in ("clam", "alt", "default"):
+            if base in available:
+                style.theme_use(base)
+                break
+
+        # フレーム（ページ背景 / カード）
+        style.configure("App.TFrame", background=theme.BG)
+        style.configure("Card.TFrame", background=theme.CARD)
+        style.configure("Header.TFrame", background=theme.BG)
+
+        # ラベル各種
+        style.configure("TLabel", background=theme.BG, foreground=theme.TEXT,
+                        font=theme.FONT_BASE)
+        style.configure("Card.TLabel", background=theme.CARD, foreground=theme.TEXT,
+                        font=theme.FONT_BASE)
+        style.configure("Date.TLabel", background=theme.BG, foreground=theme.TEXT,
+                        font=theme.FONT_DATE)
+        style.configure("Heading.TLabel", background=theme.CARD, foreground=theme.TEXT,
+                        font=theme.FONT_HEADING)
+        style.configure("Status.TLabel", background=theme.BG, foreground=theme.TEXT_MUTED,
+                        font=theme.FONT_SMALL)
+        # 統計はブランド色のピル（バッジ）風に見せる。
+        style.configure("Stats.TLabel", background=theme.BRAND_SOFT,
+                        foreground=theme.BRAND_DARK, font=theme.FONT_STATS, padding=(12, 6))
+
+        # 入力ウィジェット（白背景・角丸風の余白）
+        for name in ("TEntry", "TSpinbox", "TCombobox"):
+            style.configure(name, fieldbackground=theme.CARD, background=theme.CARD,
+                            foreground=theme.TEXT, bordercolor=theme.BORDER,
+                            arrowcolor=theme.TEXT_MUTED, padding=4)
+
+        # ボタン: プライマリ（ブランド色）とセカンダリ（白地）の 2 種。
+        style.configure("TButton", font=theme.FONT_BASE, padding=(12, 7),
+                        relief="flat", background=theme.CARD, foreground=theme.TEXT,
+                        bordercolor=theme.BORDER, focuscolor=theme.BRAND_SOFT)
+        style.map("TButton",
+                  background=[("active", theme.BRAND_SOFT)],
+                  foreground=[("active", theme.BRAND_DARK)])
+        style.configure("Primary.TButton", font=theme.FONT_BOLD, padding=(14, 8),
+                        relief="flat", background=theme.BRAND,
+                        foreground=theme.TEXT_ON_BRAND, focuscolor=theme.BRAND)
+        style.map("Primary.TButton",
+                  background=[("active", theme.BRAND_DARK), ("pressed", theme.BRAND_DARK)],
+                  foreground=[("active", theme.TEXT_ON_BRAND)])
+
+        # Treeview（タイムライン / バックログ）
+        style.configure("Treeview", background=theme.CARD, fieldbackground=theme.CARD,
+                        foreground=theme.TEXT, rowheight=theme.ROW_HEIGHT,
+                        borderwidth=0, font=theme.FONT_BASE)
+        style.configure("Treeview.Heading", background=theme.BG, foreground=theme.TEXT_MUTED,
+                        relief="flat", font=theme.FONT_SMALL, padding=(8, 6))
+        style.map("Treeview.Heading", background=[("active", theme.BORDER)])
+        style.map("Treeview",
+                  background=[("selected", theme.BRAND_SOFT)],
+                  foreground=[("selected", theme.BRAND_DARK)])
+
+        # スピンボックスの矢印・スクロールバーも基調に合わせる。
+        style.configure("Vertical.TScrollbar", background=theme.BG,
+                        troughcolor=theme.BG, bordercolor=theme.BG,
+                        arrowcolor=theme.TEXT_MUTED)
+
     def _build_ui(self) -> None:
         """ウィンドウとすべての UI コンポーネントを構築する。"""
         self.root.title("Any Planner")
         _set_window_icon(self.root)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        try:
+            self.root.configure(bg=theme.BG)
+            self.root.minsize(900, 540)
+        except Exception:
+            logging.debug("ルートウィンドウの背景設定に失敗しました。")
 
-        style = ttk.Style()
-        available = style.theme_names()
-        for theme in ("aqua", "clam", "vista"):
-            if theme in available:
-                style.theme_use(theme)
-                break
-        style.configure("TLabel", font=("system", 11))
-        style.configure("TButton", font=("system", 11), padding=5)
-        style.configure("Status.TLabel", font=("system", 10), foreground="#666")
-        style.configure("Stats.TLabel", font=("system", 11, "bold"), foreground="#0a7")
-        style.configure("Heading.TLabel", font=("system", 13, "bold"))
-        style.configure("Date.TLabel", font=("system", 14, "bold"))
+        self._apply_style()
 
-        frame = ttk.Frame(self.root, padding=16)
+        frame = ttk.Frame(self.root, padding=18, style="App.TFrame")
         frame.grid(sticky="nsew")
         frame.columnconfigure(0, weight=3, uniform="cols")
         frame.columnconfigure(1, weight=2, uniform="cols")
@@ -169,111 +242,114 @@ class PlannerApp:
 
     def _build_header(self, frame: ttk.Frame) -> None:
         """日付・起床/就寝・統計を表示するヘッダ（row 0）。"""
-        header = ttk.Frame(frame)
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        header = ttk.Frame(frame, style="Header.TFrame")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         header.columnconfigure(2, weight=1)
 
+        ttk.Label(header, text="📅", style="Date.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(header, textvariable=self.date_var, style="Date.TLabel").grid(
-            row=0, column=0, sticky="w")
+            row=0, column=1, sticky="w", padx=(6, 0))
 
-        rng = ttk.Frame(header)
-        rng.grid(row=0, column=1, sticky="w", padx=16)
-        ttk.Label(rng, text="起床").pack(side=tk.LEFT)
+        rng = ttk.Frame(header, style="Header.TFrame")
+        rng.grid(row=0, column=2, sticky="e", padx=(16, 12))
+        ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)
         self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=0, to=23,
                                      width=3, format="%02.0f", command=self._on_range_change)
-        self.wake_menu.pack(side=tk.LEFT, padx=(2, 8))
-        ttk.Label(rng, text="就寝").pack(side=tk.LEFT)
+        self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)
         self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=0, to=23,
                                       width=3, format="%02.0f", command=self._on_range_change)
-        self.sleep_menu.pack(side=tk.LEFT, padx=(2, 0))
+        self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))
         self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())
         self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())
 
         ttk.Label(header, textvariable=self.stats_var, style="Stats.TLabel").grid(
-            row=0, column=2, sticky="e")
+            row=0, column=3, sticky="e")
 
     def _build_input(self, frame: ttk.Frame) -> None:
-        """タスク追加フォーム（row 1）。"""
-        row = ttk.Frame(frame)
-        row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        row.columnconfigure(0, weight=1)
+        """タスク追加フォーム（row 1）。白いカードにまとめる。"""
+        card = ttk.Frame(frame, style="Card.TFrame", padding=12)
+        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        card.columnconfigure(0, weight=1)
 
-        self.title_entry = ttk.Entry(row, textvariable=self.title_var, font=("system", 11))
-        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.title_entry = ttk.Entry(card, textvariable=self.title_var, font=theme.FONT_BASE)
+        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=3)
 
-        opts = ttk.Frame(row)
+        opts = ttk.Frame(card, style="Card.TFrame")
         opts.grid(row=0, column=1)
-        ttk.Label(opts, text="開始").pack(side=tk.LEFT)
+        ttk.Label(opts, text="⏰ 開始", style="Card.TLabel").pack(side=tk.LEFT)
         self.hour_menu = ttk.Spinbox(opts, textvariable=self.hour_var, from_=HOUR_MIN, to=HOUR_MAX,
                                      wrap=True, width=3, format="%02.0f")
-        self.hour_menu.pack(side=tk.LEFT, padx=(2, 0))
-        ttk.Label(opts, text=":").pack(side=tk.LEFT)
+        self.hour_menu.pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(opts, text=":", style="Card.TLabel").pack(side=tk.LEFT)
         self.minute_menu = ttk.Spinbox(opts, textvariable=self.minute_var, from_=MINUTE_MIN,
                                        to=MINUTE_MAX, wrap=True, width=3, format="%02.0f")
-        self.minute_menu.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(opts, text="所要(分)").pack(side=tk.LEFT)
+        self.minute_menu.pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(opts, text="⏳ 所要(分)", style="Card.TLabel").pack(side=tk.LEFT)
         self.dur_menu = ttk.Spinbox(opts, textvariable=self.dur_var, from_=MIN_DURATION,
                                     to=MAX_DURATION, increment=5, width=5)
-        self.dur_menu.pack(side=tk.LEFT, padx=(2, 8))
-        ttk.Label(opts, text="繰り返し").pack(side=tk.LEFT)
+        self.dur_menu.pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(opts, text="🔁 繰り返し", style="Card.TLabel").pack(side=tk.LEFT)
         self.recur_menu = ttk.Combobox(opts, textvariable=self.recur_var, state="readonly",
                                        width=5, values=[RECUR_LABELS[u] for u in RECUR_UNITS])
-        self.recur_menu.pack(side=tk.LEFT, padx=(2, 0))
+        self.recur_menu.pack(side=tk.LEFT, padx=(4, 0))
         self.interval_menu = ttk.Spinbox(opts, textvariable=self.interval_var, from_=MIN_INTERVAL,
                                          to=MAX_INTERVAL, width=3)
-        self.interval_menu.pack(side=tk.LEFT, padx=(2, 8))
+        self.interval_menu.pack(side=tk.LEFT, padx=(4, 14))
 
-        ttk.Button(opts, text="タイムラインへ", command=self.add_to_timeline).pack(side=tk.LEFT)
-        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(opts, text="＋ タイムラインへ", style="Primary.TButton",
+                   command=self.add_to_timeline).pack(side=tk.LEFT)
+        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(8, 0))
 
     def _build_timeline(self, frame: ttk.Frame) -> None:
-        """今日のタイムライン（row 2, col 0）。"""
-        panel = ttk.Frame(frame)
-        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        """今日のカレンダー（デイビュー）（row 2, col 0）。
+
+        縦の時間軸（起床〜就寝）に、タスクを所要時間ぶんの高さを持つ
+        色付きブロックとして配置する。Google カレンダー / TimeTree の
+        1 日表示に近い見た目で、空き時間は「ブロックが無い余白」として
+        そのまま見える。
+        """
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)
+        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 9))
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(1, weight=1)
 
-        ttk.Label(panel, text="今日のタイムライン", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(panel, text="🗓 今日のカレンダー", style="Heading.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 10))
 
-        body = ttk.Frame(panel)
+        body = ttk.Frame(panel, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        self.timeline_tree = ttk.Treeview(body, columns=("time", "title", "info"),
-                                          show="headings", height=12)
-        self.timeline_tree.heading("time", text="時間")
-        self.timeline_tree.heading("title", text="タスク")
-        self.timeline_tree.heading("info", text="繰り返し")
-        self.timeline_tree.column("time", width=110, anchor="w", stretch=False)
-        self.timeline_tree.column("title", width=200, anchor="w")
-        self.timeline_tree.column("info", width=80, anchor="center", stretch=False)
+        # timeline_tree という名前は後方互換のため踏襲（実体はカレンダー Canvas）。
+        self.timeline_tree = tk.Canvas(body, bg=theme.CARD, highlightthickness=0,
+                                       height=12 * theme.HOUR_HEIGHT)
         self.timeline_tree.grid(row=0, column=0, sticky="nsew")
         sb = ttk.Scrollbar(body, orient="vertical", command=self.timeline_tree.yview)
         self.timeline_tree.configure(yscrollcommand=sb.set)
         sb.grid(row=0, column=1, sticky="ns")
-        self.timeline_tree.tag_configure(ROW_FREE, foreground="#9aa0a6")
-        self.timeline_tree.tag_configure(STATUS_DONE, foreground="#9aa0a6")
-        self.timeline_tree.tag_configure(STATUS_NOW, foreground="#0a7", font=("system", 11, "bold"))
-        self.timeline_tree.tag_configure(STATUS_PAST, foreground="#c0392b")
+        # クリックでブロック選択、リサイズで実幅を反映して再描画する。
+        self.timeline_tree.bind("<Button-1>", self._on_timeline_click)
+        self.timeline_tree.bind("<Configure>", self._on_timeline_resize)
 
-        actions = ttk.Frame(panel)
-        actions.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(actions, text="完了", command=self.complete_timeline_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(actions, text="削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(6, 0))
+        actions = ttk.Frame(panel, style="Card.TFrame")
+        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        ttk.Button(actions, text="✓ 完了", style="Primary.TButton",
+                   command=self.complete_timeline_selected).pack(side=tk.LEFT)
+        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(8, 0))
 
     def _build_backlog(self, frame: ttk.Frame) -> None:
-        """あとでやるリスト（row 2, col 1）。"""
-        panel = ttk.Frame(frame)
+        """あとでやるリスト（row 2, col 1）。白いカードにまとめる。"""
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)
         panel.grid(row=2, column=1, sticky="nsew")
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(1, weight=1)
 
-        ttk.Label(panel, text="あとでやる", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(panel, text="🌙 あとでやる", style="Heading.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 10))
 
-        body = ttk.Frame(panel)
+        body = ttk.Frame(panel, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
@@ -282,20 +358,33 @@ class PlannerApp:
         self.backlog_tree.heading("title", text="タスク")
         self.backlog_tree.heading("dur", text="所要")
         self.backlog_tree.heading("info", text="繰り返し")
-        self.backlog_tree.column("title", width=160, anchor="w")
+        self.backlog_tree.column("title", width=170, anchor="w")
         self.backlog_tree.column("dur", width=70, anchor="center", stretch=False)
-        self.backlog_tree.column("info", width=70, anchor="center", stretch=False)
+        self.backlog_tree.column("info", width=80, anchor="center", stretch=False)
         self.backlog_tree.grid(row=0, column=0, sticky="nsew")
         sb = ttk.Scrollbar(body, orient="vertical", command=self.backlog_tree.yview)
         self.backlog_tree.configure(yscrollcommand=sb.set)
         sb.grid(row=0, column=1, sticky="ns")
-        self.backlog_tree.tag_configure("suggest", foreground="#0a7")
+        self._configure_row_tags(self.backlog_tree)
 
-        actions = ttk.Frame(panel)
-        actions.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(actions, text="予定に追加", command=self.schedule_backlog_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="完了", command=self.complete_backlog_selected).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(actions, text="削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(6, 0))
+        actions = ttk.Frame(panel, style="Card.TFrame")
+        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        ttk.Button(actions, text="＋ 予定に追加", style="Primary.TButton",
+                   command=self.schedule_backlog_selected).pack(side=tk.LEFT)
+        ttk.Button(actions, text="✓ 完了", command=self.complete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="🗑 削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _configure_row_tags(self, tree: ttk.Treeview) -> None:
+        """バックログ（Treeview）の行タグ（提案色・カテゴリ色）を設定する。
+
+        タイムラインはカレンダー Canvas へ移行したため、状態色（done/now/past）の
+        スタイリングは `_block_colors` 側に集約している。ここではバックログが使う
+        「提案」と「カテゴリ色」のタグだけを設定する。
+        """
+        tree.tag_configure("suggest", foreground=theme.SUGGEST_FG, font=theme.FONT_BOLD)
+        # TimeTree 風のカテゴリ色（タスクごとに安定した彩り）。
+        for i, (bg, fg) in enumerate(theme.CATEGORY_COLORS):
+            tree.tag_configure(f"cat{i}", background=bg, foreground=fg)
 
     def _build_status(self, frame: ttk.Frame) -> None:
         """ステータスラベル（row 3）。"""
@@ -396,8 +485,12 @@ class PlannerApp:
             return None
         return self._find(selection[0])
 
+    def _timeline_selected(self) -> Task | None:
+        """カレンダーで選択中のタスクを返す（未選択なら None）。"""
+        return self._find(self._tl_selected)
+
     def complete_timeline_selected(self) -> None:
-        task = self._selected(self.timeline_tree)
+        task = self._timeline_selected()
         self._complete(task)
 
     def complete_backlog_selected(self) -> None:
@@ -439,7 +532,7 @@ class PlannerApp:
             logging.info("タスクを完了: %s", task.title)
 
     def delete_timeline_selected(self) -> None:
-        self._delete(self._selected(self.timeline_tree))
+        self._delete(self._timeline_selected())
 
     def delete_backlog_selected(self) -> None:
         self._delete(self._selected(self.backlog_tree))
@@ -450,18 +543,23 @@ class PlannerApp:
             return
         self._cancel_job(task.id)
         self.tasks = [t for t in self.tasks if t.id != task.id]
+        if self._tl_selected == task.id:  # 消えたタスクの選択を残さない
+            self._tl_selected = None
         self._persist_tasks()
         self._refresh()
         self.status_var.set(f"「{task.title}」を削除しました。")
 
     def move_to_backlog(self) -> None:
         """タイムライン上のタスクを「あとでやる」へ戻す（時間を外す）。"""
-        task = self._selected(self.timeline_tree)
+        task = self._timeline_selected()
         if task is None:
             self.status_var.set("移動するタスクを選択してください。")
             return
         self._cancel_job(task.id)
         task.due = ""
+        # バックログへ移すとカレンダーから消えるため、タイムラインの選択を解除する。
+        # （残すと完了/削除ボタンが見えないバックログ項目を操作してしまう。）
+        self._tl_selected = None
         self._persist_tasks()
         self._refresh()
         self.status_var.set(f"「{task.title}」を「あとでやる」へ移動しました。")
@@ -506,23 +604,217 @@ class PlannerApp:
         return moved > 0 or len(self.tasks) != before
 
     def _render_timeline(self, today: datetime.date) -> None:
-        tree = self.timeline_tree
-        for item in tree.get_children():
-            tree.delete(item)
+        """カレンダー（デイビュー）を Canvas に描画する。
+
+        起床〜就寝を縦軸に取り、1 時間ごとの罫線と時刻ラベルを引き、
+        各タスクを「開始位置 y・所要時間ぶんの高さ」を持つ色付きブロックで
+        配置する。重なるタスクは横に並べて見えなくならないようにする。
+        """
+        cv = self.timeline_tree
+        cv.delete("all")
+        # クリック判定用（x0,y0,x1,y1, チェックボックス領域, task.id, 完了フラグ）。
+        self._tl_blocks = []
+        wake_min, sleep_min = self._wake_min(), self._sleep_min()
         now = datetime.datetime.now()
-        rows = build_day_timeline(self.tasks, today, self._wake_min(), self._sleep_min(), now)
-        for i, row in enumerate(rows):
-            span = f"{row.start:%H:%M}–{row.end:%H:%M}"
-            if row.kind == ROW_TASK:
-                task = row.task
-                title = ("✓ " if row.status == STATUS_DONE else "") + task.title
-                tree.insert("", tk.END, iid=task.id,
-                            values=(span, title, self._recur_text(task)),
-                            tags=(row.status,))
-            else:  # ROW_FREE
-                tree.insert("", tk.END, iid=f"free{i}",
-                            values=(span, f"空き {format_duration(row.minutes)}", ""),
-                            tags=(ROW_FREE,))
+        # 論理的な 1 日の範囲（夜間レンジの翌日跨ぎ込み）は build_day_timeline と
+        # 同じ day_bounds を使い、窓の算出元を一本化する（ズレ防止）。
+        day_start, day_end = day_bounds(today, wake_min, sleep_min)
+
+        rows = build_day_timeline(self.tasks, today, wake_min, sleep_min, now)
+        task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]
+
+        # 起床前/就寝後に始まる・終わるタスクも必ず可視範囲に含める。
+        # （設定変更や時間外スケジュールでブロックが見切れて操作不能になるのを防ぐ。）
+        window_start = min([day_start] + [r.start for r in task_rows])
+        window_end = max([day_end] + [r.end for r in task_rows])
+
+        scale = theme.HOUR_HEIGHT / 60.0
+
+        def y_of(dt: datetime.datetime) -> float:
+            return theme.CAL_PAD_TOP + (dt - window_start).total_seconds() / 60.0 * scale
+
+        width = max(self._tl_width, theme.CAL_GUTTER + 80)
+        self._draw_time_grid(cv, window_start, window_end, width, y_of)
+
+        lanes = self._assign_lanes(task_rows)
+        lane_count = (max(lanes.values()) + 1) if lanes else 1
+        area_left = theme.CAL_GUTTER
+        area_w = width - area_left - theme.CAL_BLOCK_GAP
+        lane_w = area_w / lane_count
+        for row in task_rows:
+            self._draw_task_block(cv, row, y_of, lanes[row.task.id], lane_w, area_left)
+
+        self._draw_now_line(cv, now, window_start, window_end, y_of, width)
+
+        # scrollregion はブロック描画後に確定する。最低高を確保した短いタスクが
+        # window_end を超えて伸びても、下端とチェックボックスが見切れないようにする。
+        content_bottom = max([y_of(window_end)] + [b[3] for b in self._tl_blocks])
+        height = int(content_bottom + theme.CAL_PAD_TOP)
+        cv.configure(scrollregion=(0, 0, width, height))
+
+    def _draw_time_grid(self, cv, window_start, window_end, width, y_of) -> None:
+        """正時（と 30 分）の罫線・時刻ラベルを、実際の時刻に合わせて描く。
+
+        起床が 07:30 のような非正時でも、罫線は実際の時計の正時に引き、
+        ラベルもその時刻（HH:00）を表示するため、ブロック位置とズレない。
+        """
+        first_hour = window_start.replace(minute=0, second=0, microsecond=0)
+        if first_hour < window_start:
+            first_hour += datetime.timedelta(hours=1)
+        t = first_hour
+        while t <= window_end:
+            y = y_of(t)
+            cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.GRID_LINE)
+            cv.create_text(theme.CAL_GUTTER - 8, y, anchor="e", text=f"{t.hour:02d}:00",
+                           fill=theme.GRID_LABEL, font=theme.FONT_SMALL)
+            half = t + datetime.timedelta(minutes=30)
+            if half < window_end:
+                cv.create_line(theme.CAL_GUTTER, y_of(half), width, y_of(half),
+                               fill=theme.GRID_LINE_HALF)
+            t += datetime.timedelta(hours=1)
+
+    @staticmethod
+    def _assign_lanes(task_rows) -> dict[str, int]:
+        """重なり合うタスクを横レーンに割り当てる（task.id → レーン番号）。"""
+        lanes: dict[str, int] = {}
+        active: list[tuple] = []  # (end_datetime, lane)
+        for row in sorted(task_rows, key=lambda r: r.start):
+            used = {lane for end, lane in active if end > row.start}
+            active = [(end, lane) for end, lane in active if end > row.start]
+            lane = 0
+            while lane in used:
+                lane += 1
+            lanes[row.task.id] = lane
+            active.append((row.end, lane))
+        return lanes
+
+    def _draw_task_block(self, cv, row, y_of, lane: int, lane_w: float,
+                         area_left: float) -> None:
+        """1 件のタスクを Any Planner 風のカードとして描く。
+
+        左端にカテゴリ色のストライプ、その右に丸いチェックボックス（完了は ✓ 入り）、
+        さらに右にタイトルと時刻を置く。クリック判定用の座標を記録する。
+        """
+        task = row.task
+        y0 = y_of(row.start)
+        y1 = max(y_of(row.end), y0 + 24)  # 最低限の高さを確保
+        x0 = area_left + lane * lane_w + theme.CAL_BLOCK_GAP
+        x1 = area_left + (lane + 1) * lane_w - theme.CAL_BLOCK_GAP
+
+        fill, accent, text_color = self._block_colors(task, row.status)
+        is_selected = task.id == self._tl_selected
+        outline = theme.BRAND_DARK if is_selected else theme.BORDER
+        ow = 3 if is_selected else 1
+        # カード本体（角丸）とカテゴリ色の左ストライプ。
+        self._rounded_rect(cv, x0, y0, x1, y1, r=theme.CAL_RADIUS, fill=fill,
+                           outline=outline, width=ow, tags=("task", task.id))
+        self._rounded_rect(cv, x0 + 3, y0 + 4, x0 + 3 + theme.CAL_STRIPE_W, y1 - 4,
+                           r=theme.CAL_STRIPE_W / 2, fill=accent, outline=accent,
+                           tags=("task", task.id))
+
+        tall = (y1 - y0) >= theme.CAL_MIN_TEXT_HEIGHT
+        done = row.status == STATUS_DONE
+        # 丸いチェックボックス（未完了＝枠線のみ / 完了＝塗り＋✓）。
+        cb_cx = x0 + theme.CAL_STRIPE_W + 16
+        cb_cy = (y0 + 16) if tall else (y0 + y1) / 2
+        r = theme.CAL_CHECK_R
+        cb_box = (cb_cx - r - 3, cb_cy - r - 3, cb_cx + r + 3, cb_cy + r + 3)
+        if done:
+            cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
+                           fill=accent, outline=accent, tags=("task", task.id))
+            cv.create_text(cb_cx, cb_cy, text="✓", fill=theme.CARD,
+                           font=theme.FONT_SMALL, tags=("task", task.id))
+        else:
+            cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
+                           outline=accent, width=2, tags=("task", task.id))
+
+        self._tl_blocks.append((x0, y0, x1, y1, cb_box, task.id, done))
+
+        # タイトル・時刻（チェックボックスの右）。繰り返しタスクは 🔁 を添える
+        # （旧タイムラインの「繰り返し」列で示していた情報をカードでも残す）。
+        title = task.title + ("  🔁" if task.recur_unit != RECUR_NONE else "")
+        text_x = cb_cx + r + 8
+        text_w = max(int(x1 - text_x - 8), 10)
+        if tall:
+            cv.create_text(text_x, y0 + 8, anchor="nw", text=title, fill=text_color,
+                           font=theme.FONT_BOLD, width=text_w, tags=("task", task.id))
+            cv.create_text(text_x, y1 - 7, anchor="sw",
+                           text=f"{row.start:%H:%M}–{row.end:%H:%M}", fill=text_color,
+                           font=theme.FONT_SMALL, tags=("task", task.id))
+        else:
+            cv.create_text(text_x, (y0 + y1) / 2, anchor="w", text=title,
+                           fill=text_color, font=theme.FONT_BASE, width=text_w,
+                           tags=("task", task.id))
+
+    @staticmethod
+    def _block_colors(task: Task, status: str) -> tuple[str, str, str]:
+        """ブロックの (塗り, アクセント=ストライプ/枠, 文字) 色を状態に応じて返す。"""
+        if status == STATUS_DONE:
+            return theme.DONE_BG, theme.DONE_FG, theme.DONE_FG
+        if status == STATUS_PAST:
+            return theme.PAST_BG, theme.PAST_FG, theme.PAST_FG
+        bg, fg = theme.category_color(task.id)
+        if status == STATUS_NOW:
+            # 進行中はブランド色の淡いカードで強調（Any Planner 風の控えめな塗り）。
+            return theme.BRAND_SOFT, theme.BRAND, theme.BRAND_DARK
+        return bg, fg, fg
+
+    @staticmethod
+    def _rounded_rect(cv, x0, y0, x1, y1, r, **kw):
+        """角丸長方形を polygon (smooth) で描く。"""
+        r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)
+        pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+               x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
+        return cv.create_polygon(pts, smooth=True, **kw)
+
+    def _draw_now_line(self, cv, now, window_start, window_end, y_of, width) -> None:
+        """現在時刻を示す横線（now ライン）を描く。"""
+        if now < window_start or now > window_end:
+            return
+        y = y_of(now)
+        cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.NOW_LINE, width=2)
+        cv.create_oval(theme.CAL_GUTTER - 4, y - 4, theme.CAL_GUTTER + 4, y + 4,
+                       fill=theme.NOW_LINE, outline=theme.NOW_LINE)
+
+    def _on_timeline_resize(self, event) -> None:
+        """Canvas の幅変更に合わせてカレンダーだけを再描画する。
+
+        幅に依存するのはカレンダーのジオメトリのみなので、繰り越し・永続化・
+        通知再スケジュールを伴う `_refresh()` は呼ばない（リサイズのたびに
+        ディスク書き込みや通知ジョブの張り直しが走るのを避ける）。ウィンドウ
+        破棄中の `<Configure>` で Canvas が無効でも落ちないよう握りつぶす。"""
+        if abs(event.width - self._tl_width) > 2:
+            self._tl_width = event.width
+            try:
+                self._render_timeline(self._planner_today())
+            except Exception:
+                logging.debug("リサイズ時のカレンダー再描画に失敗しました。")
+
+    def _on_timeline_click(self, event) -> None:
+        """カレンダーのクリックを処理する。
+
+        チェックボックスを押せば完了（Any Planner 風）、ブロック本体を押せば選択
+        （再クリックで解除）、余白を押せば選択解除する。重なりは最前面を優先。
+        """
+        cv = self.timeline_tree
+        x, y = cv.canvasx(event.x), cv.canvasy(event.y)
+        for x0, y0, x1, y1, cb_box, task_id, done in reversed(self._tl_blocks):
+            cbx0, cby0, cbx1, cby1 = cb_box
+            in_checkbox = cbx0 <= x <= cbx1 and cby0 <= y <= cby1
+            in_block = x0 <= x <= x1 and y0 <= y <= y1
+            # チェックボックスは（狭いレーンでカード幅をはみ出しても）独立に判定する。
+            if not in_checkbox and not in_block:
+                continue
+            if not done and in_checkbox:
+                self._tl_selected = task_id
+                self._complete(self._find(task_id))  # 内部で再描画される
+            else:
+                self._tl_selected = None if task_id == self._tl_selected else task_id
+                self._refresh()
+            return
+        if self._tl_selected is not None:  # 余白クリックで選択解除
+            self._tl_selected = None
+            self._refresh()
 
     def _render_backlog(self, today: datetime.date) -> None:
         tree = self.backlog_tree
@@ -534,11 +826,15 @@ class PlannerApp:
                              self._wake_min(), self._sleep_min())
         suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}
         for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:
-            tags = ("suggest",) if task.id in suggestions else ()
+            if task.id in suggestions:
+                title, tag = f"✨ {task.title}", "suggest"
+            else:
+                title, tag = f"{theme.category_dot(task.id)} {task.title}", \
+                    f"cat{theme.category_index(task.id)}"
             tree.insert("", tk.END, iid=task.id,
-                        values=(task.title, format_duration(task.duration_min),
+                        values=(title, format_duration(task.duration_min),
                                 self._recur_text(task)),
-                        tags=tags)
+                        tags=(tag,))
 
     def _render_stats(self, today: datetime.date) -> None:
         wake, sleep = self._wake_min(), self._sleep_min()
