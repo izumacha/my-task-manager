@@ -31,8 +31,10 @@ from .time_utils import (
     delay_ms_until,
 )
 
-# main は __main__ に定義。pyproject の scripts エントリ（reminder:main）から参照される
-from .__main__ import main
+# main は cli モジュールに定義。pyproject の scripts エントリ（reminder:main）から
+# 参照される。__main__ ではなく cli から import することで、python -m reminder 実行時に
+# __main__ が二重ロードされる RuntimeWarning を避ける。
+from .cli import main
 
 __all__ = [
     "PlannerApp",

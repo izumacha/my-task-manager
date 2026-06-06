@@ -309,16 +309,21 @@ class BackwardCompatTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
-    @patch("reminder.__main__.PlannerApp")
-    @patch("reminder.__main__.tk.Tk")
+    @patch("reminder.cli.PlannerApp")
+    @patch("reminder.cli.tk.Tk")
     def test_main_creates_app_and_runs_mainloop(self, mock_tk_cls, mock_app_cls):
         mock_root = Mock()
         mock_tk_cls.return_value = mock_root
-        from reminder.__main__ import main
+        from reminder.cli import main
         main()
         mock_tk_cls.assert_called_once()
         mock_app_cls.assert_called_once_with(mock_root)
         mock_root.mainloop.assert_called_once()
+
+    def test_main_callable_from_package_namespace(self):
+        # console-script エントリ（reminder:main）が解決できることを保証する
+        import reminder
+        self.assertTrue(callable(reminder.main))
 
 
 if __name__ == "__main__":

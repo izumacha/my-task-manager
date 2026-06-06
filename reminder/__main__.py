@@ -1,16 +1,10 @@
-"""アプリケーションのエントリーポイント。Tk ウィンドウを生成してイベントループを起動する。"""
-import logging
-import tkinter as tk
+"""`python -m reminder` のエントリーポイント。
 
-from .app import PlannerApp
-
-
-def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    root = tk.Tk()
-    PlannerApp(root)
-    root.mainloop()
-
+実体は `reminder.cli.main` に置き、このモジュールは薄いラッパーに徹する。
+こうすることで `reminder.__main__` がパッケージ import 時に先読みされず、
+`python -m reminder` 実行時の RuntimeWarning を回避できる。
+"""
+from .cli import main
 
 if __name__ == "__main__":
     main()
