@@ -90,7 +90,9 @@ pip install -r requirements-dev.txt  # 開発・テスト用
 - **`stats.py`**: `completed_count_on()` / `current_streak()` / `total_completed()`。完了履歴（ISO 文字列リスト）から集計する純粋ロジック。
 - **`time_utils.py`**: `delay_ms_until()` および定数。GUI から独立したユーティリティ。
 - **`theme.py`**: 配色（ブランド色・状態色・タスクのカテゴリパレット）・フォント・余白・カレンダー寸法（`HOUR_HEIGHT` 等）などのデザイントークンと、タスクへ安定した色を割り当てる `category_color()` / `category_dot()`。GUI 非依存の純粋定数・関数。見た目を変えるときはここだけを編集すればよく、表示層（`app.py`）はトークンを参照するだけにする。
-- **`app.py` のカレンダー描画**: 今日のタスクは Treeview ではなく `tk.Canvas` で「デイビュー」として描画する（`_render_timeline` と補助の `_draw_time_grid` / `_draw_task_block` / `_draw_now_line` / `_assign_lanes`）。位置・高さは分→px 換算（`HOUR_HEIGHT`）で算出し、Canvas の実サイズに依存しない（テストで Canvas をモックしても算術が壊れない）。ブロックの選択はクリックされた `task.id` を `self._tl_selected` に保持する方式で、`build_day_timeline()` の純粋ロジックをそのまま再利用する。
+- **`app.py` のカレンダー描画**: 今日のタスクは Treeview ではなく `tk.Canvas` で「デイビュー」として描画する（`_render_timeline` と補助の `_draw_time_grid` / `_draw_task_block` / `_draw_now_line` / `_assign_lanes`）。位置・高さは分→px 換算（`HOUR_HEIGHT`）で算出し、Canvas の実サイズに依存しない（テストで Canvas をモックしても算術が壊れない）。各タスクは Any Planner 風のカード（カテゴリ色の左ストライプ＋丸いチェックボックス＋タイトル＋時刻）で描く。クリック判定は描画時に記録した矩形 `self._tl_blocks`（座標ベース）で行い、チェックボックスを押すと完了、本体を押すと選択（`self._tl_selected`）。状態判定は `build_day_timeline()` の純粋ロジックをそのまま再利用する。
+  - **表示窓は実タスクを内包するよう広げる**: 描画の上端/下端は `min(起床, 最早タスク開始)`〜`max(就寝, 最遅タスク終了)`。起床前・就寝後に始まる/終わるタスクが負座標や scrollregion 外に描かれて操作不能になるのを防ぐ。
+  - **罫線ラベルは実際の正時に合わせる**: 起床が `07:30` のような非正時でも、罫線は実時計の正時（08:00…）に引きラベルもその時刻にする（`wake_min` からの単純な 60 分刻みにしない）。
 - **`notifications.py`**: `play_notification_sound()`, `_set_window_icon()` および OS 別ヘルパー。
 - **`config.py`**: `load_tasks()` / `save_tasks()` でタスク配列を、`load_prefs()` / `save_prefs()` で設定（`Prefs`: 起床/就寝/完了履歴）を `~/.config/reminder/` に永続化。壊れたエントリは個別にスキップする。
 - **`app.py`**: `PlannerApp` クラス。`__init__` で読み込み→繰り越し/整理→状態初期化→`_build_ui()`→`_refresh()`（タイムライン/バックログ/統計の再描画）→`_schedule_all()`。テスト時は `_build_ui` / `_refresh` / `_schedule_all` をモックして Tk インスタンスなしでテスト可能。`ReminderApp` は後方互換エイリアス。

@@ -349,6 +349,52 @@ class RenderTests(AppTestCase):
         self.assertIn("完了", app.stats_var.get())
 
 
+class CalendarRenderTests(AppTestCase):
+    """カレンダー（デイビュー）の描画ジオメトリと操作の検証。"""
+
+    def test_offhours_task_stays_in_view(self):
+        # 起床(07:00)より前に始まるタスクも負の座標にならず可視範囲に入る
+        today = datetime.date.today()
+        due = datetime.datetime.combine(today, datetime.time(5, 0))
+        task = Task(title="早朝", due=_iso(due), duration_min=30)
+        app, _ = self._app([task])
+        app._render_timeline(today)
+        blocks = [b for b in app._tl_blocks if b[5] == task.id]
+        self.assertTrue(blocks)  # ブロックが描かれている
+        _x0, y0, _x1, y1, _cb, _tid, _done = blocks[0]
+        self.assertGreaterEqual(y0, 0)   # 負の y に描かれない（見切れない）
+        self.assertGreater(y1, y0)
+
+    def test_grid_labels_respect_minute_offset(self):
+        # 起床が 07:30（非正時）でも罫線ラベルは実際の正時（08:00〜）になる
+        today = datetime.date.today()
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="23:00"))
+        app._render_timeline(today)
+        texts = [c.kwargs.get("text") for c in app.timeline_tree.create_text.call_args_list]
+        self.assertIn("08:00", texts)
+        self.assertNotIn("07:00", texts)  # 起床が 07:30 なので 07:00 の誤ラベルは出ない
+
+    def test_checkbox_click_completes(self):
+        # チェックボックス領域のクリックでタスクが完了する（Any Planner 風）
+        today = datetime.date.today()
+        now = datetime.datetime.now().replace(microsecond=0)
+        task = Task(title="掃除", due=_iso(now))
+        app, _ = self._app([task])
+        app.date_var = _DummyVar()
+        app.stats_var = _DummyVar()
+        app._render_timeline(today)
+        blocks = [b for b in app._tl_blocks if b[5] == task.id]
+        self.assertTrue(blocks)
+        cb = blocks[0][4]
+        ev = Mock()
+        ev.x = (cb[0] + cb[2]) / 2
+        ev.y = (cb[1] + cb[3]) / 2
+        app.timeline_tree.canvasx.side_effect = lambda v: v
+        app.timeline_tree.canvasy.side_effect = lambda v: v
+        app._on_timeline_click(ev)
+        self.assertTrue(task.completed)
+
+
 class RolloverTests(AppTestCase):
     def test_refresh_runs_rollover(self):
         # 再描画のたびに繰り越し・整理が走る（日跨ぎで開きっぱなしでも消えない）

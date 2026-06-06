@@ -71,17 +71,23 @@ ROW_HEIGHT = 30
 
 # 縦軸カレンダーの 1 時間あたりの高さ（px）と、左の時刻ラベル幅・上下の余白。
 # 所要時間に比例した高さのブロックでタスクを描くため、分→px の換算に使う。
-HOUR_HEIGHT = 56
+HOUR_HEIGHT = 60           # 1 時間あたりの高さ
 CAL_GUTTER = 56            # 左の時刻ラベル列の幅
-CAL_PAD_TOP = 10           # 描画の上下余白
-CAL_BLOCK_GAP = 3          # ブロック左右/相互の隙間
-GRID_LINE = "#EEF1F4"      # 時刻の罫線
+CAL_PAD_TOP = 12           # 描画の上下余白
+CAL_BLOCK_GAP = 4          # ブロック左右/相互の隙間
+GRID_LINE = "#E9EDF2"      # 正時の罫線
+GRID_LINE_HALF = "#F2F5F8"  # 30 分の罫線（さらに淡く）
 GRID_LABEL = "#9AA0A6"     # 時刻ラベルの文字
 NOW_LINE = "#FF6F61"       # 現在時刻ライン（コーラル）
 
+# Any Planner 風のタスクカード要素。
+CAL_STRIPE_W = 5           # カード左端のカテゴリ色ストライプの幅
+CAL_CHECK_R = 7            # チェックボックス円の半径
+CAL_RADIUS = 10            # カードの角丸半径
+
 # ブロックにタイトルと時刻の 2 行を載せられる最小の高さ（px）。
 # これ未満の短いタスクは、文字が重ならないようタイトルのみを 1 行で中央表示する。
-CAL_MIN_TEXT_HEIGHT = 44
+CAL_MIN_TEXT_HEIGHT = 46
 
 
 def category_index(key: str) -> int:

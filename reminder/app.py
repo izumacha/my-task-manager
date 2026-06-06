@@ -86,6 +86,8 @@ class PlannerApp:
         # 選択は Treeview ではなく「クリックされたブロックの task.id」で管理する。
         self._tl_selected: str | None = None
         self._tl_width: int = 460  # <Configure> で実幅に更新する
+        # クリック判定用のブロック矩形（_render_timeline で毎回作り直す）。
+        self._tl_blocks: list = []
 
         # 起動時・再描画時の整理（前日以前の完了破棄・未完了の繰り越し）は
         # _refresh() 内の _roll_over() に集約している。
@@ -605,41 +607,67 @@ class PlannerApp:
         """
         cv = self.timeline_tree
         cv.delete("all")
+        # クリック判定用（x0,y0,x1,y1, チェックボックス領域, task.id, 完了フラグ）。
+        self._tl_blocks = []
         wake_min, sleep_min = self._wake_min(), self._sleep_min()
         now = datetime.datetime.now()
-        window_start = datetime.datetime.combine(
+        # 論理的な 1 日の範囲（就寝が起床以前なら翌日扱い＝夜間レンジ）。
+        day_start = datetime.datetime.combine(
             today, datetime.time(wake_min // 60, wake_min % 60))
-        # 就寝が起床以前なら翌日扱い（夜間レンジに対応）。
-        total_min = (sleep_min - wake_min) if sleep_min > wake_min else (sleep_min + 24 * 60 - wake_min)
-        total_min = max(total_min, 60)
-        scale = theme.HOUR_HEIGHT / 60.0
-        height = int(theme.CAL_PAD_TOP * 2 + total_min * scale)
-        width = max(self._tl_width, theme.CAL_GUTTER + 80)
-        cv.configure(scrollregion=(0, 0, width, height))
-
-        self._draw_time_grid(cv, wake_min, total_min, width, scale)
+        day_end = datetime.datetime.combine(
+            today, datetime.time(sleep_min // 60, sleep_min % 60))
+        if day_end <= day_start:
+            day_end += datetime.timedelta(days=1)
 
         rows = build_day_timeline(self.tasks, today, wake_min, sleep_min, now)
         task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]
+
+        # 起床前/就寝後に始まる・終わるタスクも必ず可視範囲に含める。
+        # （設定変更や時間外スケジュールでブロックが見切れて操作不能になるのを防ぐ。）
+        window_start = min([day_start] + [r.start for r in task_rows])
+        window_end = max([day_end] + [r.end for r in task_rows])
+
+        scale = theme.HOUR_HEIGHT / 60.0
+
+        def y_of(dt: datetime.datetime) -> float:
+            return theme.CAL_PAD_TOP + (dt - window_start).total_seconds() / 60.0 * scale
+
+        height = int(y_of(window_end) + theme.CAL_PAD_TOP)
+        width = max(self._tl_width, theme.CAL_GUTTER + 80)
+        cv.configure(scrollregion=(0, 0, width, height))
+
+        self._draw_time_grid(cv, window_start, window_end, width, y_of)
+
         lanes = self._assign_lanes(task_rows)
         lane_count = (max(lanes.values()) + 1) if lanes else 1
         area_left = theme.CAL_GUTTER
         area_w = width - area_left - theme.CAL_BLOCK_GAP
         lane_w = area_w / lane_count
         for row in task_rows:
-            self._draw_task_block(cv, row, window_start, scale, lanes[row.task.id],
-                                  lane_w, area_left)
+            self._draw_task_block(cv, row, y_of, lanes[row.task.id], lane_w, area_left)
 
-        self._draw_now_line(cv, now, window_start, total_min, scale, width)
+        self._draw_now_line(cv, now, window_start, window_end, y_of, width)
 
-    def _draw_time_grid(self, cv, wake_min: int, total_min: int, width: int, scale: float) -> None:
-        """1 時間ごとの罫線と左の時刻ラベルを描く。"""
-        for m in range(0, total_min + 1, 60):
-            y = theme.CAL_PAD_TOP + m * scale
+    def _draw_time_grid(self, cv, window_start, window_end, width, y_of) -> None:
+        """正時（と 30 分）の罫線・時刻ラベルを、実際の時刻に合わせて描く。
+
+        起床が 07:30 のような非正時でも、罫線は実際の時計の正時に引き、
+        ラベルもその時刻（HH:00）を表示するため、ブロック位置とズレない。
+        """
+        first_hour = window_start.replace(minute=0, second=0, microsecond=0)
+        if first_hour < window_start:
+            first_hour += datetime.timedelta(hours=1)
+        t = first_hour
+        while t <= window_end:
+            y = y_of(t)
             cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.GRID_LINE)
-            hh = ((wake_min + m) // 60) % 24
-            cv.create_text(theme.CAL_GUTTER - 8, y, anchor="e", text=f"{hh:02d}:00",
+            cv.create_text(theme.CAL_GUTTER - 8, y, anchor="e", text=f"{t.hour:02d}:00",
                            fill=theme.GRID_LABEL, font=theme.FONT_SMALL)
+            half = t + datetime.timedelta(minutes=30)
+            if half < window_end:
+                cv.create_line(theme.CAL_GUTTER, y_of(half), width, y_of(half),
+                               fill=theme.GRID_LINE_HALF)
+            t += datetime.timedelta(hours=1)
 
     @staticmethod
     def _assign_lanes(task_rows) -> dict[str, int]:
@@ -656,50 +684,73 @@ class PlannerApp:
             active.append((row.end, lane))
         return lanes
 
-    def _draw_task_block(self, cv, row, window_start: datetime.datetime, scale: float,
-                         lane: int, lane_w: float, area_left: float) -> None:
-        """1 件のタスクを色付きブロックとして描く。"""
+    def _draw_task_block(self, cv, row, y_of, lane: int, lane_w: float,
+                         area_left: float) -> None:
+        """1 件のタスクを Any Planner 風のカードとして描く。
+
+        左端にカテゴリ色のストライプ、その右に丸いチェックボックス（完了は ✓ 入り）、
+        さらに右にタイトルと時刻を置く。クリック判定用の座標を記録する。
+        """
         task = row.task
-        top_min = (row.start - window_start).total_seconds() / 60.0
-        bot_min = (row.end - window_start).total_seconds() / 60.0
-        y0 = theme.CAL_PAD_TOP + top_min * scale
-        y1 = max(theme.CAL_PAD_TOP + bot_min * scale, y0 + 18)  # 最低限の高さを確保
+        y0 = y_of(row.start)
+        y1 = max(y_of(row.end), y0 + 24)  # 最低限の高さを確保
         x0 = area_left + lane * lane_w + theme.CAL_BLOCK_GAP
         x1 = area_left + (lane + 1) * lane_w - theme.CAL_BLOCK_GAP
 
-        bg, fg, outline = self._block_colors(task, row.status)
+        fill, accent, text_color = self._block_colors(task, row.status)
         is_selected = task.id == self._tl_selected
+        outline = theme.BRAND_DARK if is_selected else theme.BORDER
         ow = 3 if is_selected else 1
-        ol = theme.BRAND_DARK if is_selected else outline
-        # 角丸風のブロック（角に小さな円を置いて丸みを演出）。
-        self._rounded_rect(cv, x0, y0, x1, y1, r=8, fill=bg, outline=ol, width=ow,
+        # カード本体（角丸）とカテゴリ色の左ストライプ。
+        self._rounded_rect(cv, x0, y0, x1, y1, r=theme.CAL_RADIUS, fill=fill,
+                           outline=outline, width=ow, tags=("task", task.id))
+        self._rounded_rect(cv, x0 + 3, y0 + 4, x0 + 3 + theme.CAL_STRIPE_W, y1 - 4,
+                           r=theme.CAL_STRIPE_W / 2, fill=accent, outline=accent,
                            tags=("task", task.id))
 
-        pad = 8
-        prefix, _ = self._row_style(task, row.status)
-        time_txt = f"{row.start:%H:%M}–{row.end:%H:%M}"
-        if (y1 - y0) >= theme.CAL_MIN_TEXT_HEIGHT:
-            cv.create_text(x0 + pad, y0 + 5, anchor="nw", text=prefix + task.title,
-                           fill=fg, font=theme.FONT_BOLD, width=max(int(x1 - x0 - pad * 2), 10),
-                           tags=("task", task.id))
-            cv.create_text(x0 + pad, y1 - 5, anchor="sw", text=time_txt, fill=fg,
+        tall = (y1 - y0) >= theme.CAL_MIN_TEXT_HEIGHT
+        done = row.status == STATUS_DONE
+        # 丸いチェックボックス（未完了＝枠線のみ / 完了＝塗り＋✓）。
+        cb_cx = x0 + theme.CAL_STRIPE_W + 16
+        cb_cy = (y0 + 16) if tall else (y0 + y1) / 2
+        r = theme.CAL_CHECK_R
+        cb_box = (cb_cx - r - 3, cb_cy - r - 3, cb_cx + r + 3, cb_cy + r + 3)
+        if done:
+            cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
+                           fill=accent, outline=accent, tags=("task", task.id))
+            cv.create_text(cb_cx, cb_cy, text="✓", fill=theme.CARD,
                            font=theme.FONT_SMALL, tags=("task", task.id))
         else:
-            cv.create_text(x0 + pad, (y0 + y1) / 2, anchor="w", text=prefix + task.title,
-                           fill=fg, font=theme.FONT_BASE,
-                           width=max(int(x1 - x0 - pad * 2), 10), tags=("task", task.id))
+            cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
+                           outline=accent, width=2, tags=("task", task.id))
+
+        self._tl_blocks.append((x0, y0, x1, y1, cb_box, task.id, done))
+
+        # タイトル・時刻（チェックボックスの右）。
+        text_x = cb_cx + r + 8
+        text_w = max(int(x1 - text_x - 8), 10)
+        if tall:
+            cv.create_text(text_x, y0 + 8, anchor="nw", text=task.title, fill=text_color,
+                           font=theme.FONT_BOLD, width=text_w, tags=("task", task.id))
+            cv.create_text(text_x, y1 - 7, anchor="sw",
+                           text=f"{row.start:%H:%M}–{row.end:%H:%M}", fill=text_color,
+                           font=theme.FONT_SMALL, tags=("task", task.id))
+        else:
+            cv.create_text(text_x, (y0 + y1) / 2, anchor="w", text=task.title,
+                           fill=text_color, font=theme.FONT_BASE, width=text_w,
+                           tags=("task", task.id))
 
     @staticmethod
     def _block_colors(task: Task, status: str) -> tuple[str, str, str]:
-        """ブロックの (背景, 文字, 枠線) 色を状態に応じて返す。"""
+        """ブロックの (塗り, アクセント=ストライプ/枠, 文字) 色を状態に応じて返す。"""
         if status == STATUS_DONE:
             return theme.DONE_BG, theme.DONE_FG, theme.DONE_FG
         if status == STATUS_PAST:
             return theme.PAST_BG, theme.PAST_FG, theme.PAST_FG
         bg, fg = theme.category_color(task.id)
         if status == STATUS_NOW:
-            # 進行中はブランド色で塗り、白文字で強調する。
-            return theme.BRAND, theme.TEXT_ON_BRAND, theme.BRAND_DARK
+            # 進行中はブランド色の淡いカードで強調（Any Planner 風の控えめな塗り）。
+            return theme.BRAND_SOFT, theme.BRAND, theme.BRAND_DARK
         return bg, fg, fg
 
     @staticmethod
@@ -710,12 +761,11 @@ class PlannerApp:
                x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
         return cv.create_polygon(pts, smooth=True, **kw)
 
-    def _draw_now_line(self, cv, now, window_start, total_min, scale, width) -> None:
+    def _draw_now_line(self, cv, now, window_start, window_end, y_of, width) -> None:
         """現在時刻を示す横線（now ライン）を描く。"""
-        cur_min = (now - window_start).total_seconds() / 60.0
-        if cur_min < 0 or cur_min > total_min:
+        if now < window_start or now > window_end:
             return
-        y = theme.CAL_PAD_TOP + cur_min * scale
+        y = y_of(now)
         cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.NOW_LINE, width=2)
         cv.create_oval(theme.CAL_GUTTER - 4, y - 4, theme.CAL_GUTTER + 4, y + 4,
                        fill=theme.NOW_LINE, outline=theme.NOW_LINE)
@@ -727,20 +777,26 @@ class PlannerApp:
             self._refresh()
 
     def _on_timeline_click(self, event) -> None:
-        """クリック位置のブロックを選択し、再描画して枠を強調する。"""
+        """カレンダーのクリックを処理する。
+
+        チェックボックスを押せば完了（Any Planner 風）、ブロック本体を押せば選択
+        （再クリックで解除）、余白を押せば選択解除する。重なりは最前面を優先。
+        """
         cv = self.timeline_tree
-        x = cv.canvasx(event.x)
-        y = cv.canvasy(event.y)
-        item = cv.find_closest(x, y)
-        task_id = None
-        if item:
-            for tag in cv.gettags(item[0]):
-                if tag != "task" and tag != "current":
-                    task_id = tag
-                    break
-        # 既に選択中のブロックを再クリックしたら選択解除する。
-        self._tl_selected = None if task_id == self._tl_selected else task_id
-        self._refresh()
+        x, y = cv.canvasx(event.x), cv.canvasy(event.y)
+        for x0, y0, x1, y1, cb_box, task_id, done in reversed(self._tl_blocks):
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                cbx0, cby0, cbx1, cby1 = cb_box
+                if not done and cbx0 <= x <= cbx1 and cby0 <= y <= cby1:
+                    self._tl_selected = task_id
+                    self._complete(self._find(task_id))  # 内部で再描画される
+                else:
+                    self._tl_selected = None if task_id == self._tl_selected else task_id
+                    self._refresh()
+                return
+        if self._tl_selected is not None:  # 余白クリックで選択解除
+            self._tl_selected = None
+            self._refresh()
 
     def _render_backlog(self, today: datetime.date) -> None:
         tree = self.backlog_tree
@@ -769,21 +825,6 @@ class PlannerApp:
         free = free_minutes_today(self.tasks, today, wake, sleep)
         self.stats_var.set(
             f"今日の完了 {done}件 ・ 連続 {streak}日 ・ 空き {format_duration(free)}")
-
-    @staticmethod
-    def _row_style(task: Task, status: str) -> tuple[str, str]:
-        """タスク行の (タイトル接頭辞, タグ名) を状態に応じて返す。
-
-        これからのタスクは TimeTree のように色分け（カテゴリ色）し、
-        完了/進行中/期限超過は状態色を優先して見分けやすくする。
-        """
-        if status == STATUS_DONE:
-            return "✓ ", STATUS_DONE
-        if status == STATUS_NOW:
-            return "▶ ", STATUS_NOW
-        if status == STATUS_PAST:
-            return "⚠ ", STATUS_PAST
-        return f"{theme.category_dot(task.id)} ", f"cat{theme.category_index(task.id)}"
 
     @staticmethod
     def _recur_text(task: Task) -> str:
