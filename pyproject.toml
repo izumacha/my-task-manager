@@ -1,7 +1,7 @@
 [project]
 name = "reminder"
-version = "0.1.0"
-description = "時刻指定リマインダー GUI アプリ（tkinter）"
+version = "0.2.0"
+description = "Any Planner 風タスクプランナー GUI アプリ（tkinter）。完了時点からの繰り返し（日/週/月/年）対応"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

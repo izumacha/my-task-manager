@@ -2,13 +2,13 @@
 import logging
 import tkinter as tk
 
-from .app import ReminderApp
+from .app import PlannerApp
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     root = tk.Tk()
-    ReminderApp(root)
+    PlannerApp(root)
     root.mainloop()
 
 
