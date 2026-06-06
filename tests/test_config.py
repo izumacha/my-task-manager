@@ -5,9 +5,60 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from reminder.config import load_tasks, save_tasks
+from reminder.config import Prefs, load_prefs, load_tasks, save_prefs, save_tasks
 from reminder.recurrence import RECUR_WEEKLY
 from reminder.task import Task
+
+
+class PrefsPersistenceTests(unittest.TestCase):
+    def test_default_prefs(self):
+        p = Prefs()
+        self.assertEqual(p.wake, "07:00")
+        self.assertEqual(p.sleep, "23:00")
+        self.assertEqual(p.completions, [])
+
+    def test_save_and_load_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            original = Prefs(wake="06:30", sleep="22:00",
+                             completions=["2026-06-06T09:00:00", "2026-06-05T18:00:00"])
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):
+                save_prefs(original)
+                loaded = load_prefs()
+            self.assertEqual(loaded.wake, "06:30")
+            self.assertEqual(loaded.sleep, "22:00")
+            self.assertEqual(len(loaded.completions), 2)
+
+    def test_load_missing_returns_defaults(self):
+        with patch("reminder.config._SETTINGS_PATH", "/nonexistent/settings.json"):
+            self.assertEqual(load_prefs().wake, "07:00")
+
+    def test_load_non_dict_returns_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump([1, 2, 3], f)
+            with patch("reminder.config._SETTINGS_PATH", path):
+                self.assertEqual(load_prefs().sleep, "23:00")
+
+    def test_load_sanitizes_completions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"wake": "08:00", "completions": ["2026-06-06T09:00:00", 123, None]}, f)
+            with patch("reminder.config._SETTINGS_PATH", path):
+                loaded = load_prefs()
+            self.assertEqual(loaded.wake, "08:00")
+            self.assertEqual(loaded.completions, ["2026-06-06T09:00:00"])
+
+    def test_load_ignores_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"wake": "05:00", "unknown": "x"}, f)
+            with patch("reminder.config._SETTINGS_PATH", path):
+                self.assertEqual(load_prefs().wake, "05:00")
 
 
 class TaskPersistenceTests(unittest.TestCase):
@@ -107,6 +158,20 @@ class TaskPersistenceTests(unittest.TestCase):
             self.assertEqual(len(loaded), 1)
             self.assertIsInstance(loaded[0].id, str)
             self.assertNotEqual(loaded[0].id, 123)
+
+    def test_load_skips_non_string_title(self):
+        # タイトルが非文字列の壊れたエントリはスキップされる
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")
+            with open(tasks_path, "w", encoding="utf-8") as f:
+                json.dump([
+                    {"title": "ok", "due": "2026-06-06T09:00:00"},
+                    {"title": 123, "due": "2026-06-07T09:00:00"},
+                    {"title": "", "due": "2026-06-08T09:00:00"},
+                ], f)
+            with patch("reminder.config._TASKS_PATH", tasks_path):
+                loaded = load_tasks()
+            self.assertEqual([t.title for t in loaded], ["ok"])
 
     def test_load_invalid_json_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:

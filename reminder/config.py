@@ -1,6 +1,7 @@
-"""タスク一覧の永続化（JSON）。
+"""タスク一覧と設定の永続化（JSON）。
 
 タスクは ``~/.config/reminder/tasks.json`` に配列として保存される。
+起床/就寝時刻や完了履歴などの設定は ``settings.json`` に保存される。
 読み込み時に壊れたエントリは黙ってスキップし、アプリの起動を妨げない。
 """
 from __future__ import annotations
@@ -9,11 +10,62 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import asdict, dataclass, field
 
 from .task import Task
+from .timeline import DEFAULT_SLEEP_MIN, DEFAULT_WAKE_MIN, min_to_hhmm
 
 _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "reminder")
 _TASKS_PATH = os.path.join(_CONFIG_DIR, "tasks.json")
+_SETTINGS_PATH = os.path.join(_CONFIG_DIR, "settings.json")
+
+
+@dataclass
+class Prefs:
+    """永続化するアプリ設定。
+
+    Attributes:
+        wake: 起床時刻（"HH:MM"）。タイムラインの開始境界。
+        sleep: 就寝時刻（"HH:MM"）。タイムラインの終了境界。
+        completions: 完了日時（ISO 文字列）の履歴。統計に使用する。
+    """
+
+    wake: str = field(default_factory=lambda: min_to_hhmm(DEFAULT_WAKE_MIN))
+    sleep: str = field(default_factory=lambda: min_to_hhmm(DEFAULT_SLEEP_MIN))
+    completions: list[str] = field(default_factory=list)
+
+
+def load_prefs() -> Prefs:
+    """設定を読み込む。存在しない/壊れている場合は既定値を返す。"""
+    try:
+        with open(_SETTINGS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return Prefs()
+    except Exception:
+        logging.warning("設定ファイルの読み込みに失敗しました: %s", _SETTINGS_PATH)
+        return Prefs()
+
+    if not isinstance(data, dict):
+        return Prefs()
+
+    prefs = Prefs(**{k: v for k, v in data.items() if k in Prefs.__dataclass_fields__})
+    # completions は文字列リストであることを保証する（壊れた値は捨てる）
+    if not isinstance(prefs.completions, list):
+        prefs.completions = []
+    else:
+        prefs.completions = [c for c in prefs.completions if isinstance(c, str)]
+    return prefs
+
+
+def save_prefs(prefs: Prefs) -> None:
+    """設定を JSON ファイルに書き出す。"""
+    try:
+        os.makedirs(_CONFIG_DIR, exist_ok=True)
+        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(asdict(prefs), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning("設定ファイルの保存に失敗しました: %s", e)
 
 
 def load_tasks() -> list[Task]:
