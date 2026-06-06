@@ -68,6 +68,22 @@ class TaskPersistenceTests(unittest.TestCase):
                 loaded = load_tasks()
             self.assertEqual([t.title for t in loaded], ["ok", "ok2"])
 
+    def test_load_regenerates_duplicate_ids(self):
+        # 同じ id を持つ 2 件を読み込んでも、iid 衝突を防ぐため id は一意化される
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")
+            with open(tasks_path, "w", encoding="utf-8") as f:
+                json.dump([
+                    {"title": "a", "due": "2026-06-06T09:00:00", "id": "dup"},
+                    {"title": "b", "due": "2026-06-07T09:00:00", "id": "dup"},
+                ], f)
+            with patch("reminder.config._TASKS_PATH", tasks_path):
+                loaded = load_tasks()
+            self.assertEqual(len(loaded), 2)
+            self.assertNotEqual(loaded[0].id, loaded[1].id)
+            # 最初のエントリは元の id を維持する
+            self.assertEqual(loaded[0].id, "dup")
+
     def test_load_invalid_json_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tasks_path = os.path.join(tmpdir, "tasks.json")

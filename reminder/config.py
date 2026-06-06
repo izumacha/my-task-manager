@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 
 from .task import Task
 
@@ -30,14 +31,23 @@ def load_tasks() -> list[Task]:
         return []
 
     tasks: list[Task] = []
+    seen_ids: set[str] = set()
     for entry in data:
         if not isinstance(entry, dict):
             continue
         try:
-            tasks.append(Task.from_dict(entry))
+            task = Task.from_dict(entry)
         except Exception:
             # 1 件壊れていても残りは読み込めるよう、個別にスキップする
             logging.debug("壊れたタスクエントリをスキップしました: %r", entry)
+            continue
+        # Treeview の iid には task.id を使うため一意でなければならない。
+        # バックアップのコピー/マージ等で id が重複した場合は再採番し、
+        # _render_tasks() での TclError（起動不能）を防ぐ。
+        if task.id in seen_ids:
+            task.id = uuid.uuid4().hex
+        seen_ids.add(task.id)
+        tasks.append(task)
     return tasks
 
 
