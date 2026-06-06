@@ -45,13 +45,13 @@ from .task import (
     make_due,
 )
 from .timeline import (
-    ROW_FREE,
     ROW_TASK,
     STATUS_DONE,
     STATUS_NOW,
     STATUS_PAST,
     build_day_timeline,
     carry_over_overdue,
+    day_bounds,
     format_duration,
     free_minutes_today,
     hhmm_to_min,
@@ -375,12 +375,12 @@ class PlannerApp:
         ttk.Button(actions, text="🗑 削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))
 
     def _configure_row_tags(self, tree: ttk.Treeview) -> None:
-        """Treeview の行タグ（状態色・カテゴリ色・提案色）を設定する。"""
-        tree.tag_configure(ROW_FREE, foreground=theme.TEXT_MUTED)
-        tree.tag_configure(STATUS_DONE, background=theme.DONE_BG, foreground=theme.DONE_FG)
-        tree.tag_configure(STATUS_NOW, background=theme.BRAND, foreground=theme.NOW_FG,
-                           font=theme.FONT_BOLD)
-        tree.tag_configure(STATUS_PAST, background=theme.PAST_BG, foreground=theme.PAST_FG)
+        """バックログ（Treeview）の行タグ（提案色・カテゴリ色）を設定する。
+
+        タイムラインはカレンダー Canvas へ移行したため、状態色（done/now/past）の
+        スタイリングは `_block_colors` 側に集約している。ここではバックログが使う
+        「提案」と「カテゴリ色」のタグだけを設定する。
+        """
         tree.tag_configure("suggest", foreground=theme.SUGGEST_FG, font=theme.FONT_BOLD)
         # TimeTree 風のカテゴリ色（タスクごとに安定した彩り）。
         for i, (bg, fg) in enumerate(theme.CATEGORY_COLORS):
@@ -543,6 +543,8 @@ class PlannerApp:
             return
         self._cancel_job(task.id)
         self.tasks = [t for t in self.tasks if t.id != task.id]
+        if self._tl_selected == task.id:  # 消えたタスクの選択を残さない
+            self._tl_selected = None
         self._persist_tasks()
         self._refresh()
         self.status_var.set(f"「{task.title}」を削除しました。")
@@ -555,6 +557,9 @@ class PlannerApp:
             return
         self._cancel_job(task.id)
         task.due = ""
+        # バックログへ移すとカレンダーから消えるため、タイムラインの選択を解除する。
+        # （残すと完了/削除ボタンが見えないバックログ項目を操作してしまう。）
+        self._tl_selected = None
         self._persist_tasks()
         self._refresh()
         self.status_var.set(f"「{task.title}」を「あとでやる」へ移動しました。")
@@ -611,13 +616,9 @@ class PlannerApp:
         self._tl_blocks = []
         wake_min, sleep_min = self._wake_min(), self._sleep_min()
         now = datetime.datetime.now()
-        # 論理的な 1 日の範囲（就寝が起床以前なら翌日扱い＝夜間レンジ）。
-        day_start = datetime.datetime.combine(
-            today, datetime.time(wake_min // 60, wake_min % 60))
-        day_end = datetime.datetime.combine(
-            today, datetime.time(sleep_min // 60, sleep_min % 60))
-        if day_end <= day_start:
-            day_end += datetime.timedelta(days=1)
+        # 論理的な 1 日の範囲（夜間レンジの翌日跨ぎ込み）は build_day_timeline と
+        # 同じ day_bounds を使い、窓の算出元を一本化する（ズレ防止）。
+        day_start, day_end = day_bounds(today, wake_min, sleep_min)
 
         rows = build_day_timeline(self.tasks, today, wake_min, sleep_min, now)
         task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]
@@ -632,10 +633,7 @@ class PlannerApp:
         def y_of(dt: datetime.datetime) -> float:
             return theme.CAL_PAD_TOP + (dt - window_start).total_seconds() / 60.0 * scale
 
-        height = int(y_of(window_end) + theme.CAL_PAD_TOP)
         width = max(self._tl_width, theme.CAL_GUTTER + 80)
-        cv.configure(scrollregion=(0, 0, width, height))
-
         self._draw_time_grid(cv, window_start, window_end, width, y_of)
 
         lanes = self._assign_lanes(task_rows)
@@ -647,6 +645,12 @@ class PlannerApp:
             self._draw_task_block(cv, row, y_of, lanes[row.task.id], lane_w, area_left)
 
         self._draw_now_line(cv, now, window_start, window_end, y_of, width)
+
+        # scrollregion はブロック描画後に確定する。最低高を確保した短いタスクが
+        # window_end を超えて伸びても、下端とチェックボックスが見切れないようにする。
+        content_bottom = max([y_of(window_end)] + [b[3] for b in self._tl_blocks])
+        height = int(content_bottom + theme.CAL_PAD_TOP)
+        cv.configure(scrollregion=(0, 0, width, height))
 
     def _draw_time_grid(self, cv, window_start, window_end, width, y_of) -> None:
         """正時（と 30 分）の罫線・時刻ラベルを、実際の時刻に合わせて描く。
@@ -726,17 +730,19 @@ class PlannerApp:
 
         self._tl_blocks.append((x0, y0, x1, y1, cb_box, task.id, done))
 
-        # タイトル・時刻（チェックボックスの右）。
+        # タイトル・時刻（チェックボックスの右）。繰り返しタスクは 🔁 を添える
+        # （旧タイムラインの「繰り返し」列で示していた情報をカードでも残す）。
+        title = task.title + ("  🔁" if task.recur_unit != RECUR_NONE else "")
         text_x = cb_cx + r + 8
         text_w = max(int(x1 - text_x - 8), 10)
         if tall:
-            cv.create_text(text_x, y0 + 8, anchor="nw", text=task.title, fill=text_color,
+            cv.create_text(text_x, y0 + 8, anchor="nw", text=title, fill=text_color,
                            font=theme.FONT_BOLD, width=text_w, tags=("task", task.id))
             cv.create_text(text_x, y1 - 7, anchor="sw",
                            text=f"{row.start:%H:%M}–{row.end:%H:%M}", fill=text_color,
                            font=theme.FONT_SMALL, tags=("task", task.id))
         else:
-            cv.create_text(text_x, (y0 + y1) / 2, anchor="w", text=task.title,
+            cv.create_text(text_x, (y0 + y1) / 2, anchor="w", text=title,
                            fill=text_color, font=theme.FONT_BASE, width=text_w,
                            tags=("task", task.id))
 
@@ -771,10 +777,18 @@ class PlannerApp:
                        fill=theme.NOW_LINE, outline=theme.NOW_LINE)
 
     def _on_timeline_resize(self, event) -> None:
-        """Canvas の幅変更を保存して再描画する（ブロック幅を実幅に合わせる）。"""
+        """Canvas の幅変更に合わせてカレンダーだけを再描画する。
+
+        幅に依存するのはカレンダーのジオメトリのみなので、繰り越し・永続化・
+        通知再スケジュールを伴う `_refresh()` は呼ばない（リサイズのたびに
+        ディスク書き込みや通知ジョブの張り直しが走るのを避ける）。ウィンドウ
+        破棄中の `<Configure>` で Canvas が無効でも落ちないよう握りつぶす。"""
         if abs(event.width - self._tl_width) > 2:
             self._tl_width = event.width
-            self._refresh()
+            try:
+                self._render_timeline(self._planner_today())
+            except Exception:
+                logging.debug("リサイズ時のカレンダー再描画に失敗しました。")
 
     def _on_timeline_click(self, event) -> None:
         """カレンダーのクリックを処理する。
@@ -785,15 +799,19 @@ class PlannerApp:
         cv = self.timeline_tree
         x, y = cv.canvasx(event.x), cv.canvasy(event.y)
         for x0, y0, x1, y1, cb_box, task_id, done in reversed(self._tl_blocks):
-            if x0 <= x <= x1 and y0 <= y <= y1:
-                cbx0, cby0, cbx1, cby1 = cb_box
-                if not done and cbx0 <= x <= cbx1 and cby0 <= y <= cby1:
-                    self._tl_selected = task_id
-                    self._complete(self._find(task_id))  # 内部で再描画される
-                else:
-                    self._tl_selected = None if task_id == self._tl_selected else task_id
-                    self._refresh()
-                return
+            cbx0, cby0, cbx1, cby1 = cb_box
+            in_checkbox = cbx0 <= x <= cbx1 and cby0 <= y <= cby1
+            in_block = x0 <= x <= x1 and y0 <= y <= y1
+            # チェックボックスは（狭いレーンでカード幅をはみ出しても）独立に判定する。
+            if not in_checkbox and not in_block:
+                continue
+            if not done and in_checkbox:
+                self._tl_selected = task_id
+                self._complete(self._find(task_id))  # 内部で再描画される
+            else:
+                self._tl_selected = None if task_id == self._tl_selected else task_id
+                self._refresh()
+            return
         if self._tl_selected is not None:  # 余白クリックで選択解除
             self._tl_selected = None
             self._refresh()
