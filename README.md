@@ -218,5 +218,6 @@ automation/
     ├── test_task.py
     ├── test_config.py
     ├── test_notifications.py
-    └── test_planner.py
+    ├── test_planner.py
+    └── test_theme.py
 ```
