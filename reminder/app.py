@@ -56,10 +56,13 @@ class PlannerApp:
         # タスク ID ごとに保留中の after ジョブ ID を保持する
         self.jobs: dict[str, str] = {}
 
-        now = datetime.datetime.now()
+        # 既定の期限時刻は「次の分」にする。現在の分のままだと make_due() が
+        # 秒を :00 に切り捨てたうえで due <= now と判定して翌日送りになり、
+        # 開いた直後に時刻を変えずに追加すると意図せず翌日のタスクになってしまうため。
+        default_time = datetime.datetime.now() + datetime.timedelta(minutes=1)
         self.title_var = tk.StringVar()
-        self.hour_var = tk.StringVar(value=f"{now.hour:02d}")
-        self.minute_var = tk.StringVar(value=f"{now.minute:02d}")
+        self.hour_var = tk.StringVar(value=f"{default_time.hour:02d}")
+        self.minute_var = tk.StringVar(value=f"{default_time.minute:02d}")
         # 繰り返し単位はラベル（「なし」「日」…）で UI に保持する
         self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])
         self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))
@@ -94,13 +97,13 @@ class PlannerApp:
         frame = ttk.Frame(self.root, padding=18)
         frame.grid(sticky="nsew")
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
+        frame.rowconfigure(3, weight=1)
 
         self._build_input_section(frame)   # row 0: 入力フォーム
         self._build_recur_section(frame)   # row 1: 繰り返し設定
-        self._build_list_section(frame)    # row 2: タスク一覧
-        self._build_action_section(frame)  # row 3: 完了・削除ボタン
-        self._build_status_section(frame)  # row 4: ステータスラベル
+        self._build_list_section(frame)    # row 2-3: 見出し + タスク一覧
+        self._build_action_section(frame)  # row 4: 完了・削除ボタン
+        self._build_status_section(frame)  # row 5: ステータスラベル
 
         # Enter キーでタスクを追加できるようにする
         self.root.bind("<Return>", lambda _event: self.add_task())
@@ -156,12 +159,16 @@ class PlannerApp:
         self.interval_menu.bind("<FocusOut>", lambda _event: self._normalize_interval_input())
 
     def _build_list_section(self, frame: ttk.Frame) -> None:
-        """タスク一覧を表示する Treeview を生成する（row 2）。"""
+        """見出しラベル（row 2）とタスク一覧 Treeview（row 3）を生成する。
+
+        見出しと一覧コンテナを別々の行に配置することで、拡張行（row 3）に
+        見出しが重なって表示される問題を避ける。
+        """
         ttk.Label(frame, text="タスク一覧", style="Heading.TLabel").grid(
             row=2, column=0, sticky="w", pady=(0, 6)
         )
         container = ttk.Frame(frame)
-        container.grid(row=2, column=0, sticky="nsew", pady=(24, 0))
+        container.grid(row=3, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
         container.rowconfigure(0, weight=1)
 
@@ -183,18 +190,18 @@ class PlannerApp:
         self.tree.tag_configure("overdue", foreground="#c0392b")
 
     def _build_action_section(self, frame: ttk.Frame) -> None:
-        """「完了」「削除」ボタンを生成する（row 3）。"""
+        """「完了」「削除」ボタンを生成する（row 4）。"""
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, sticky="w", pady=(12, 8))
+        buttons.grid(row=4, column=0, sticky="w", pady=(12, 8))
         self.complete_button = ttk.Button(buttons, text="完了", command=self.complete_selected)
         self.complete_button.pack(side=tk.LEFT)
         self.delete_button = ttk.Button(buttons, text="削除", command=self.delete_selected)
         self.delete_button.pack(side=tk.LEFT, padx=(8, 0))
 
     def _build_status_section(self, frame: ttk.Frame) -> None:
-        """ステータスメッセージを表示するラベルを生成する（row 4）。"""
+        """ステータスメッセージを表示するラベルを生成する（row 5）。"""
         ttk.Label(frame, textvariable=self.status_var, style="Status.TLabel").grid(
-            row=4, column=0, sticky="w", pady=(4, 0)
+            row=5, column=0, sticky="w", pady=(4, 0)
         )
 
     # ------------------------------------------------------------ 入力正規化

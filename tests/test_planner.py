@@ -11,7 +11,7 @@ import tkinter as tk
 
 from reminder.app import PlannerApp, ReminderApp
 from reminder.recurrence import RECUR_DAILY, RECUR_LABELS, RECUR_NONE
-from reminder.task import ISO_FMT, Task
+from reminder.task import ISO_FMT, Task, make_due
 from reminder.time_utils import (
     MAX_AFTER_MS,
     STATUS_EMPTY,
@@ -301,6 +301,42 @@ class RenderTasksTests(unittest.TestCase):
         app.tree.get_children.return_value = ()
         app._render_tasks()
         app.tree.insert.assert_called_once()
+
+
+class DefaultDueTimeTests(unittest.TestCase):
+    def test_default_time_is_near_future_not_next_day(self):
+        # 開いた直後に時刻を変えず追加しても翌日送りにならないこと。
+        # 既定時刻は「次の分」なので、make_due の結果は数分以内の未来に収まる。
+        before = datetime.datetime.now()
+        app, _ = _create_app()
+        target = datetime.time(int(app.hour_var.get()), int(app.minute_var.get()))
+        due = datetime.datetime.strptime(make_due(target, now=before), ISO_FMT)
+        delta = due - before
+        self.assertGreaterEqual(delta, datetime.timedelta(0))
+        self.assertLess(delta, datetime.timedelta(minutes=2))
+
+
+class ListLayoutTests(unittest.TestCase):
+    def test_heading_and_container_on_distinct_rows(self):
+        # 見出しと一覧コンテナが別々の grid 行に配置され、重ならないこと
+        app, _ = _create_app()
+        labels, frames = [], []
+
+        def make_label(*a, **k):
+            m = Mock(); labels.append(m); return m
+
+        def make_frame(*a, **k):
+            m = Mock(); frames.append(m); return m
+
+        with patch("reminder.app.ttk.Label", side_effect=make_label), \
+             patch("reminder.app.ttk.Frame", side_effect=make_frame), \
+             patch("reminder.app.ttk.Treeview", side_effect=lambda *a, **k: Mock()), \
+             patch("reminder.app.ttk.Scrollbar", side_effect=lambda *a, **k: Mock()):
+            app._build_list_section(Mock())
+
+        heading_row = labels[0].grid.call_args.kwargs["row"]
+        container_row = frames[0].grid.call_args.kwargs["row"]
+        self.assertNotEqual(heading_row, container_row)
 
 
 class BackwardCompatTests(unittest.TestCase):
