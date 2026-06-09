@@ -7,22 +7,23 @@ on:
     types: [created]
   issues:
     types: [opened, assigned]
-  pull_request:
-    types: [opened, synchronize]
 
 jobs:
   claude:
     runs-on: ubuntu-latest
-    # PR・Issueコメント時は @claude メンションがある場合のみ実行
+    # @claude メンションがあるコメント／Issue のときだけ実行する
+    # （pull_request イベントにはコメント本文が無くメンション判定できないため、
+    #  全 PR で自動起動して失敗していた従来のトリガーは廃止した）
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'pull_request')
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
     permissions:
       contents: write
       pull-requests: write
       issues: write
+      # claude-code-action は OIDC で GitHub トークンを取得するため id-token: write が必須
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
