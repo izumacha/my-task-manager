@@ -77,10 +77,10 @@ class PlannerApp:
     """
 
     def __init__(self, root: tk.Tk) -> None:
-        self.root = root
-        self.tasks: list[Task] = load_tasks()
-        self.prefs: Prefs = load_prefs()
-        self.jobs: dict[str, str] = {}
+        self.root = root  # tkinter のルートウィンドウを保持する
+        self.tasks: list[Task] = load_tasks()  # 保存済みタスクをファイルから読み込む
+        self.prefs: Prefs = load_prefs()  # 起床/就寝時刻などの設定をファイルから読み込む
+        self.jobs: dict[str, str] = {}  # タスク ID → 通知ジョブ ID の対応表を空で初期化する
 
         # カレンダー（デイビュー）の選択状態と描画幅。
         # 選択は Treeview ではなく「クリックされたブロックの task.id」で管理する。
@@ -95,21 +95,21 @@ class PlannerApp:
         # 既定開始時刻は「次の 5 分刻み」。分が繰り上がるときは時・日も繰り上げ、
         # 過去時刻が初期値にならないようにする（add_to_timeline は当日固定のため）。
         start = self._default_start(self._get_now())  # 現在時刻を _get_now() 経由で取得して既定の開始時刻を計算する
-        self.title_var = tk.StringVar()
-        self.hour_var = tk.StringVar(value=f"{start.hour:02d}")
-        self.minute_var = tk.StringVar(value=f"{start.minute:02d}")
-        self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))
-        self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])
-        self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))
-        self.wake_var = tk.StringVar(value=str(self._wake_min() // 60))
-        self.sleep_var = tk.StringVar(value=str(self._sleep_min() // 60))
-        self.date_var = tk.StringVar()
-        self.stats_var = tk.StringVar()
-        self.status_var = tk.StringVar(value="タスクを追加してください。")
+        self.title_var = tk.StringVar()  # タスク名の入力フォームに紐づく変数
+        self.hour_var = tk.StringVar(value=f"{start.hour:02d}")  # 開始時刻（時）の入力フォームに紐づく変数
+        self.minute_var = tk.StringVar(value=f"{start.minute:02d}")  # 開始時刻（分）の入力フォームに紐づく変数
+        self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))  # 所要時間（分）の入力フォームに紐づく変数
+        self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])  # 繰り返し単位の選択に紐づく変数（初期値は「繰り返しなし」）
+        self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))  # 繰り返し間隔の入力フォームに紐づく変数
+        self.wake_var = tk.StringVar(value=str(self._wake_min() // 60))  # 起床時刻（時）の設定に紐づく変数
+        self.sleep_var = tk.StringVar(value=str(self._sleep_min() // 60))  # 就寝時刻（時）の設定に紐づく変数
+        self.date_var = tk.StringVar()  # ヘッダに表示する今日の日付文字列に紐づく変数
+        self.stats_var = tk.StringVar()  # ヘッダに表示する統計文字列に紐づく変数
+        self.status_var = tk.StringVar(value="タスクを追加してください。")  # 画面下部のステータスバーに紐づく変数
 
-        self._build_ui()
-        self._refresh()
-        self._schedule_all()
+        self._build_ui()  # ウィンドウとすべての UI コンポーネントを組み立てる
+        self._refresh()  # タイムライン・バックログ・統計を初回描画する
+        self._schedule_all()  # 起動時点で未来のタスク通知をすべてスケジュールする
 
     # ------------------------------------------------------------ 設定アクセス
 
@@ -131,16 +131,16 @@ class PlannerApp:
     def _wake_min(self) -> int:
         """設定の起床時刻を分で返す（不正値は既定値）。"""
         try:
-            return hhmm_to_min(self.prefs.wake)
+            return hhmm_to_min(self.prefs.wake)  # 設定の起床時刻文字列を「分」に変換して返す
         except (ValueError, AttributeError):
-            return 7 * 60
+            return 7 * 60  # 変換に失敗したときは朝 7:00（420 分）を返す
 
     def _sleep_min(self) -> int:
         """設定の就寝時刻を分で返す（不正値は既定値）。"""
         try:
-            return hhmm_to_min(self.prefs.sleep)
+            return hhmm_to_min(self.prefs.sleep)  # 設定の就寝時刻文字列を「分」に変換して返す
         except (ValueError, AttributeError):
-            return 23 * 60
+            return 23 * 60  # 変換に失敗したときは夜 23:00（1380 分）を返す
 
     # ------------------------------------------------------------------ UI 構築
 
@@ -151,124 +151,124 @@ class PlannerApp:
         ``clam`` テーマを基盤に選ぶ。色・フォントの実値はすべて
         :mod:`reminder.theme` 側に定義し、ここでは割り当てるだけにする。
         """
-        style = ttk.Style()
-        available = style.theme_names()
+        style = ttk.Style()  # ttk のスタイルオブジェクトを取得する
+        available = style.theme_names()  # この環境で使える ttk テーマ名の一覧を取得する
         # clam は配色を細かく変更できるため最優先。無い環境では既存テーマで継続。
-        for base in ("clam", "alt", "default"):
-            if base in available:
-                style.theme_use(base)
-                break
+        for base in ("clam", "alt", "default"):  # 優先順でテーマ名を試す
+            if base in available:  # 使えるテーマが見つかったら適用して抜ける
+                style.theme_use(base)  # 見つかったテーマを ttk に適用する
+                break  # 最初に見つかったテーマで確定するのでループを終了する
 
         # フレーム（ページ背景 / カード）
-        style.configure("App.TFrame", background=theme.BG)
-        style.configure("Card.TFrame", background=theme.CARD)
-        style.configure("Header.TFrame", background=theme.BG)
+        style.configure("App.TFrame", background=theme.BG)  # アプリ全体の背景フレームを配色トークンで設定する
+        style.configure("Card.TFrame", background=theme.CARD)  # カード型フレームの背景色を設定する
+        style.configure("Header.TFrame", background=theme.BG)  # ヘッダ用フレームの背景色を設定する
 
         # ラベル各種
         style.configure("TLabel", background=theme.BG, foreground=theme.TEXT,
-                        font=theme.FONT_BASE)
+                        font=theme.FONT_BASE)  # 標準ラベルの背景・文字色・フォントを設定する
         style.configure("Card.TLabel", background=theme.CARD, foreground=theme.TEXT,
-                        font=theme.FONT_BASE)
+                        font=theme.FONT_BASE)  # カード上のラベルの背景・文字色・フォントを設定する
         style.configure("Date.TLabel", background=theme.BG, foreground=theme.TEXT,
-                        font=theme.FONT_DATE)
+                        font=theme.FONT_DATE)  # 日付表示ラベルの背景・文字色・フォントを設定する
         style.configure("Heading.TLabel", background=theme.CARD, foreground=theme.TEXT,
-                        font=theme.FONT_HEADING)
+                        font=theme.FONT_HEADING)  # セクション見出しラベルの配色・フォントを設定する
         style.configure("Status.TLabel", background=theme.BG, foreground=theme.TEXT_MUTED,
-                        font=theme.FONT_SMALL)
+                        font=theme.FONT_SMALL)  # ステータスバーラベルの配色・フォントを設定する
         # 統計はブランド色のピル（バッジ）風に見せる。
         style.configure("Stats.TLabel", background=theme.BRAND_SOFT,
-                        foreground=theme.BRAND_DARK, font=theme.FONT_STATS, padding=(12, 6))
+                        foreground=theme.BRAND_DARK, font=theme.FONT_STATS, padding=(12, 6))  # 統計バッジラベルの配色・フォント・内側余白を設定する
 
         # 入力ウィジェット（白背景・角丸風の余白）
-        for name in ("TEntry", "TSpinbox", "TCombobox"):
+        for name in ("TEntry", "TSpinbox", "TCombobox"):  # テキスト入力系ウィジェットをまとめて設定する
             style.configure(name, fieldbackground=theme.CARD, background=theme.CARD,
                             foreground=theme.TEXT, bordercolor=theme.BORDER,
-                            arrowcolor=theme.TEXT_MUTED, padding=4)
+                            arrowcolor=theme.TEXT_MUTED, padding=4)  # 入力フィールドの背景・文字色・枠線色・内側余白を設定する
 
         # ボタン: プライマリ（ブランド色）とセカンダリ（白地）の 2 種。
         style.configure("TButton", font=theme.FONT_BASE, padding=(12, 7),
                         relief="flat", background=theme.CARD, foreground=theme.TEXT,
-                        bordercolor=theme.BORDER, focuscolor=theme.BRAND_SOFT)
+                        bordercolor=theme.BORDER, focuscolor=theme.BRAND_SOFT)  # 標準ボタン（白地）の外観を設定する
         style.map("TButton",
                   background=[("active", theme.BRAND_SOFT)],
-                  foreground=[("active", theme.BRAND_DARK)])
+                  foreground=[("active", theme.BRAND_DARK)])  # 標準ボタンのホバー時の背景・文字色を設定する
         style.configure("Primary.TButton", font=theme.FONT_BOLD, padding=(14, 8),
                         relief="flat", background=theme.BRAND,
-                        foreground=theme.TEXT_ON_BRAND, focuscolor=theme.BRAND)
+                        foreground=theme.TEXT_ON_BRAND, focuscolor=theme.BRAND)  # プライマリボタン（ブランド色）の外観を設定する
         style.map("Primary.TButton",
                   background=[("active", theme.BRAND_DARK), ("pressed", theme.BRAND_DARK)],
-                  foreground=[("active", theme.TEXT_ON_BRAND)])
+                  foreground=[("active", theme.TEXT_ON_BRAND)])  # プライマリボタンのホバー・押下時の色を設定する
 
         # Treeview（タイムライン / バックログ）
         style.configure("Treeview", background=theme.CARD, fieldbackground=theme.CARD,
                         foreground=theme.TEXT, rowheight=theme.ROW_HEIGHT,
-                        borderwidth=0, font=theme.FONT_BASE)
+                        borderwidth=0, font=theme.FONT_BASE)  # Treeview の背景・行高さ・フォントを設定する
         style.configure("Treeview.Heading", background=theme.BG, foreground=theme.TEXT_MUTED,
-                        relief="flat", font=theme.FONT_SMALL, padding=(8, 6))
-        style.map("Treeview.Heading", background=[("active", theme.BORDER)])
+                        relief="flat", font=theme.FONT_SMALL, padding=(8, 6))  # Treeview の列見出しの配色・フォントを設定する
+        style.map("Treeview.Heading", background=[("active", theme.BORDER)])  # Treeview 列見出しのホバー時の背景色を設定する
         style.map("Treeview",
                   background=[("selected", theme.BRAND_SOFT)],
-                  foreground=[("selected", theme.BRAND_DARK)])
+                  foreground=[("selected", theme.BRAND_DARK)])  # Treeview の選択行の背景・文字色を設定する
 
         # スピンボックスの矢印・スクロールバーも基調に合わせる。
         style.configure("Vertical.TScrollbar", background=theme.BG,
                         troughcolor=theme.BG, bordercolor=theme.BG,
-                        arrowcolor=theme.TEXT_MUTED)
+                        arrowcolor=theme.TEXT_MUTED)  # 縦スクロールバーの配色を設定する
 
     def _build_ui(self) -> None:
         """ウィンドウとすべての UI コンポーネントを構築する。"""
-        self.root.title("my-task-manager")
-        _set_window_icon(self.root)
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.title("my-task-manager")  # ウィンドウのタイトルバーにアプリ名を設定する
+        _set_window_icon(self.root)  # ウィンドウのアイコン画像を設定する
+        self.root.columnconfigure(0, weight=1)  # 列 0 をウィンドウ幅に合わせて伸縮させる
+        self.root.rowconfigure(0, weight=1)  # 行 0 をウィンドウ高さに合わせて伸縮させる
         try:
-            self.root.configure(bg=theme.BG)
-            self.root.minsize(900, 540)
+            self.root.configure(bg=theme.BG)  # ウィンドウ全体の背景色をテーマ色に設定する
+            self.root.minsize(900, 540)  # ウィンドウを縮小できる最小サイズを設定する
         except Exception:
-            logging.debug("ルートウィンドウの背景設定に失敗しました。")
+            logging.debug("ルートウィンドウの背景設定に失敗しました。")  # 失敗してもクラッシュさせずデバッグログに記録する
 
-        self._apply_style()
+        self._apply_style()  # ttk のスタイル（配色・フォント）を一括で設定する
 
-        frame = ttk.Frame(self.root, padding=18, style="App.TFrame")
-        frame.grid(sticky="nsew")
-        frame.columnconfigure(0, weight=3, uniform="cols")
-        frame.columnconfigure(1, weight=2, uniform="cols")
-        frame.rowconfigure(2, weight=1)
+        frame = ttk.Frame(self.root, padding=18, style="App.TFrame")  # アプリ全体を包む外側フレームを作る
+        frame.grid(sticky="nsew")  # フレームをウィンドウの四辺いっぱいに配置する
+        frame.columnconfigure(0, weight=3, uniform="cols")  # 左列（タイムライン）を比率 3 で伸縮させる
+        frame.columnconfigure(1, weight=2, uniform="cols")  # 右列（バックログ）を比率 2 で伸縮させる
+        frame.rowconfigure(2, weight=1)  # タイムライン/バックログの行だけをウィンドウ高さに合わせて伸縮させる
 
-        self._build_header(frame)   # row 0
-        self._build_input(frame)    # row 1
-        self._build_timeline(frame)  # row 2 col 0
-        self._build_backlog(frame)  # row 2 col 1
-        self._build_status(frame)   # row 3
+        self._build_header(frame)   # row 0  # ヘッダ（日付・起床/就寝・統計）を組み立てる
+        self._build_input(frame)    # row 1  # タスク追加フォームを組み立てる
+        self._build_timeline(frame)  # row 2 col 0  # カレンダー（デイビュー）を組み立てる
+        self._build_backlog(frame)  # row 2 col 1  # あとでやるリストを組み立てる
+        self._build_status(frame)   # row 3  # ステータスバーを組み立てる
 
-        self.root.bind("<Return>", lambda _e: self.add_to_timeline())
-        self.title_entry.focus_set()
+        self.root.bind("<Return>", lambda _e: self.add_to_timeline())  # Enter キーでタスクをタイムラインに追加できるようにする
+        self.title_entry.focus_set()  # 起動直後にタスク名入力欄にフォーカスを当てる
 
     def _build_header(self, frame: ttk.Frame) -> None:
         """日付・起床/就寝・統計を表示するヘッダ（row 0）。"""
-        header = ttk.Frame(frame, style="Header.TFrame")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        header.columnconfigure(2, weight=1)
+        header = ttk.Frame(frame, style="Header.TFrame")  # ヘッダ全体を包むフレームを作る
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))  # ヘッダを 2 列幅で横いっぱいに配置する
+        header.columnconfigure(2, weight=1)  # 起床/就寝スピンボックスを右寄せにするため列 2 を伸縮させる
 
-        ttk.Label(header, text="📅", style="Date.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="📅", style="Date.TLabel").grid(row=0, column=0, sticky="w")  # カレンダーアイコンを左端に配置する
         ttk.Label(header, textvariable=self.date_var, style="Date.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(6, 0))
+            row=0, column=1, sticky="w", padx=(6, 0))  # 今日の日付ラベルをアイコンの右に配置する
 
-        rng = ttk.Frame(header, style="Header.TFrame")
-        rng.grid(row=0, column=2, sticky="e", padx=(16, 12))
-        ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)
+        rng = ttk.Frame(header, style="Header.TFrame")  # 起床/就寝スピンボックスをまとめるフレームを作る
+        rng.grid(row=0, column=2, sticky="e", padx=(16, 12))  # 起床/就寝フレームをヘッダ右側に配置する
+        ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)  # 起床ラベルを左詰めで配置する
         self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=0, to=23,
-                                     width=3, format="%02.0f", command=self._on_range_change)
-        self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)
+                                     width=3, format="%02.0f", command=self._on_range_change)  # 起床時刻を 0〜23 時で選ぶスピンボックスを作る
+        self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))  # 起床スピンボックスをラベルの右に配置する
+        ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)  # 就寝ラベルを左詰めで配置する
         self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=0, to=23,
-                                      width=3, format="%02.0f", command=self._on_range_change)
-        self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))
-        self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())
-        self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())
+                                      width=3, format="%02.0f", command=self._on_range_change)  # 就寝時刻を 0〜23 時で選ぶスピンボックスを作る
+        self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))  # 就寝スピンボックスをラベルの右に配置する
+        self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 起床スピンボックスからフォーカスが外れたとき設定を反映する
+        self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 就寝スピンボックスからフォーカスが外れたとき設定を反映する
 
         ttk.Label(header, textvariable=self.stats_var, style="Stats.TLabel").grid(
-            row=0, column=3, sticky="e")
+            row=0, column=3, sticky="e")  # 統計バッジをヘッダ右端に配置する
 
     def _build_input(self, frame: ttk.Frame) -> None:
         """タスク追加フォーム（row 1）。白いカードにまとめる。"""
