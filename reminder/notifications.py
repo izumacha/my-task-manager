@@ -12,21 +12,21 @@ import tkinter as tk
 def _set_window_icon(root: tk.Tk) -> None:
     """SVG アイコンをウィンドウに設定する。変換ライブラリが無い場合は無視する。"""
     try:
-        import cairosvg  # type: ignore[import]
+        import cairosvg  # type: ignore[import]  # SVG→PNG 変換ライブラリをオプションでインポートする（なければ除外）
 
         # パッケージの親ディレクトリ（プロジェクトルート）の assets/ を参照する
         svg_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "assets",
             "reminder_icon.svg",
-        )
-        png_data = cairosvg.svg2png(url=svg_path, output_width=64, output_height=64)
-        icon = tk.PhotoImage(data=base64.b64encode(png_data))
+        )  # SVG アイコンファイルの絶対パスを組み立てる
+        png_data = cairosvg.svg2png(url=svg_path, output_width=64, output_height=64)  # SVG を 64×64px の PNG バイト列に変換する
+        icon = tk.PhotoImage(data=base64.b64encode(png_data))  # PNG バイト列を Base64 エンコードして tkinter の画像オブジェクトを作る
         # Tk 側で画像が解放されないように参照を保持する。
-        root._icon_image = icon  # type: ignore[attr-defined]
-        root.iconphoto(True, icon)
-    except Exception as e:
-        logging.debug("ウィンドウアイコンの設定をスキップしました: %s", e)
+        root._icon_image = icon  # type: ignore[attr-defined]  # ガベージコレクションで解放されないよう root に参照を保持させる
+        root.iconphoto(True, icon)  # ウィンドウとその子ウィンドウ全てにアイコンを設定する
+    except Exception as e:  # cairosvg がない・ファイルが見つからないなどあらゆるエラーを捕捉する
+        logging.debug("ウィンドウアイコンの設定をスキップしました: %s", e)  # デバッグログにスキップ理由を記録する
 
 
 def _play_macos_sound() -> None:
@@ -36,17 +36,17 @@ def _play_macos_sound() -> None:
             ["/usr/bin/afplay", "/System/Library/Sounds/Glass.aiff"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-        )
-        proc.wait()
+        )  # afplay コマンドをサブプロセスとして起動し、出力を捨てる
+        proc.wait()  # 再生が終わるまでサブスレッド内で待機する
 
-    threading.Thread(target=_play_and_wait, daemon=True).start()
+    threading.Thread(target=_play_and_wait, daemon=True).start()  # 再生処理をデーモンスレッドで開始してUIスレッドをブロックしない
 
 
 def _play_windows_sound() -> None:
     """Windows: winsound.MessageBeep で警告音を再生する。"""
-    import winsound
+    import winsound  # Windows 専用の音声再生モジュールをインポートする
 
-    winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+    winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)  # 警告（！）アイコンに対応するシステム音を鳴らす
 
 
 def _send_linux_notification(body: str = "") -> None:
@@ -55,27 +55,27 @@ def _send_linux_notification(body: str = "") -> None:
     Args:
         body: 通知本文（タスク名など）。空の場合はタイトルのみ表示する。
     """
-    args = ["notify-send", "--urgency=normal", "プランナー"]
-    if body:
-        args.append(body)
+    args = ["notify-send", "--urgency=normal", "プランナー"]  # notify-send コマンドの基本引数リストを組み立てる
+    if body:  # 本文テキストが指定されている場合
+        args.append(body)  # 引数リストに本文を追加する
     try:
         subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-        )
-    except Exception as e:
+        )  # notify-send をサブプロセスとして起動し、出力を捨てる（非同期）
+    except Exception as e:  # notify-send が存在しないなどのエラーを捕捉する
         # notify-send が利用できない場合はログのみ残し、呼び出し側の bell にフォールバックする
-        logging.debug("notify-send の送信に失敗しました: %s", e)
+        logging.debug("notify-send の送信に失敗しました: %s", e)  # デバッグログにエラー内容を記録する
 
 
 def _ring_bell(root: tk.Tk) -> None:
     """tkinter の bell() を安全に鳴らす（TclError は無視する）。"""
     try:
-        root.bell()
+        root.bell()  # tkinter のビープ音（システムベル）を鳴らす
     except tk.TclError:
         # 実行環境によっては bell が利用できないことがあるため無視する。
-        pass
+        pass  # TclError が発生しても何もせず静かに無視する
 
 
 def play_notification_sound(root: tk.Tk, body: str = "") -> None:
@@ -91,19 +91,19 @@ def play_notification_sound(root: tk.Tk, body: str = "") -> None:
         root: 鳴動フォールバックに使う Tk ルート。
         body: Linux のデスクトップ通知に載せる本文（タスク名など）。
     """
-    system_name = platform.system()
+    system_name = platform.system()  # 現在の OS 名（Darwin/Windows/Linux など）を取得する
     try:
-        if system_name == "Darwin":
-            _play_macos_sound()
-            return
-        if system_name == "Windows":
-            _play_windows_sound()
-            return
-        if system_name == "Linux":
+        if system_name == "Darwin":  # macOS の場合
+            _play_macos_sound()  # afplay で Glass.aiff を別スレッド再生する
+            return  # 再生を開始したのでこの関数を終了する
+        if system_name == "Windows":  # Windows の場合
+            _play_windows_sound()  # winsound で警告音を再生する
+            return  # 再生したのでこの関数を終了する
+        if system_name == "Linux":  # Linux の場合
             # notify-send は音を伴わないことがあるため、後段の bell も併せて鳴らす
-            _send_linux_notification(body)
-    except Exception:
+            _send_linux_notification(body)  # デスクトップ通知を送信する
+    except Exception:  # OS 固有の再生処理でエラーが発生した場合
         # OS 固有の再生に失敗した場合は bell にフォールバック
-        pass
+        pass  # 例外を無視してフォールバックの bell に処理を委ねる
 
-    _ring_bell(root)
+    _ring_bell(root)  # 最終フォールバックとして tkinter のベル音を鳴らす

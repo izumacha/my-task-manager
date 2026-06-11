@@ -272,38 +272,38 @@ class PlannerApp:
 
     def _build_input(self, frame: ttk.Frame) -> None:
         """タスク追加フォーム（row 1）。白いカードにまとめる。"""
-        card = ttk.Frame(frame, style="Card.TFrame", padding=12)
-        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        card.columnconfigure(0, weight=1)
+        card = ttk.Frame(frame, style="Card.TFrame", padding=12)  # タスク追加フォームを包むカードフレームを作る
+        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))  # カードを 2 列幅で横いっぱいに配置する
+        card.columnconfigure(0, weight=1)  # タスク名入力欄が残りの幅を占めるよう列 0 を伸縮させる
 
-        self.title_entry = ttk.Entry(card, textvariable=self.title_var, font=theme.FONT_BASE)
-        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=3)
+        self.title_entry = ttk.Entry(card, textvariable=self.title_var, font=theme.FONT_BASE)  # タスク名のテキスト入力欄を作る
+        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=3)  # タスク名入力欄を横いっぱいに配置する
 
-        opts = ttk.Frame(card, style="Card.TFrame")
-        opts.grid(row=0, column=1)
-        ttk.Label(opts, text="⏰ 開始", style="Card.TLabel").pack(side=tk.LEFT)
+        opts = ttk.Frame(card, style="Card.TFrame")  # 時刻・所要時間・繰り返し・ボタンをまとめるフレームを作る
+        opts.grid(row=0, column=1)  # オプションフレームをタスク名入力欄の右に配置する
+        ttk.Label(opts, text="⏰ 開始", style="Card.TLabel").pack(side=tk.LEFT)  # 「開始」ラベルを左詰めで配置する
         self.hour_menu = ttk.Spinbox(opts, textvariable=self.hour_var, from_=HOUR_MIN, to=HOUR_MAX,
-                                     wrap=True, width=3, format="%02.0f")
-        self.hour_menu.pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Label(opts, text=":", style="Card.TLabel").pack(side=tk.LEFT)
+                                     wrap=True, width=3, format="%02.0f")  # 開始時刻の「時」スピンボックスを作る
+        self.hour_menu.pack(side=tk.LEFT, padx=(4, 0))  # 「時」スピンボックスをラベルの右に配置する
+        ttk.Label(opts, text=":", style="Card.TLabel").pack(side=tk.LEFT)  # 時と分の区切り「:」を配置する
         self.minute_menu = ttk.Spinbox(opts, textvariable=self.minute_var, from_=MINUTE_MIN,
-                                       to=MINUTE_MAX, wrap=True, width=3, format="%02.0f")
-        self.minute_menu.pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Label(opts, text="⏳ 所要(分)", style="Card.TLabel").pack(side=tk.LEFT)
+                                       to=MINUTE_MAX, wrap=True, width=3, format="%02.0f")  # 開始時刻の「分」スピンボックスを作る
+        self.minute_menu.pack(side=tk.LEFT, padx=(0, 12))  # 「分」スピンボックスを「:」の右に配置する
+        ttk.Label(opts, text="⏳ 所要(分)", style="Card.TLabel").pack(side=tk.LEFT)  # 「所要(分)」ラベルを左詰めで配置する
         self.dur_menu = ttk.Spinbox(opts, textvariable=self.dur_var, from_=MIN_DURATION,
-                                    to=MAX_DURATION, increment=5, width=5)
-        self.dur_menu.pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(opts, text="🔁 繰り返し", style="Card.TLabel").pack(side=tk.LEFT)
+                                    to=MAX_DURATION, increment=5, width=5)  # 所要時間（分）のスピンボックスを 5 分刻みで作る
+        self.dur_menu.pack(side=tk.LEFT, padx=(4, 12))  # 所要時間スピンボックスをラベルの右に配置する
+        ttk.Label(opts, text="🔁 繰り返し", style="Card.TLabel").pack(side=tk.LEFT)  # 「繰り返し」ラベルを左詰めで配置する
         self.recur_menu = ttk.Combobox(opts, textvariable=self.recur_var, state="readonly",
-                                       width=5, values=[RECUR_LABELS[u] for u in RECUR_UNITS])
-        self.recur_menu.pack(side=tk.LEFT, padx=(4, 0))
+                                       width=5, values=[RECUR_LABELS[u] for u in RECUR_UNITS])  # 繰り返し単位を選ぶドロップダウンを作る
+        self.recur_menu.pack(side=tk.LEFT, padx=(4, 0))  # 繰り返しドロップダウンをラベルの右に配置する
         self.interval_menu = ttk.Spinbox(opts, textvariable=self.interval_var, from_=MIN_INTERVAL,
-                                         to=MAX_INTERVAL, width=3)
-        self.interval_menu.pack(side=tk.LEFT, padx=(4, 14))
+                                         to=MAX_INTERVAL, width=3)  # 繰り返し間隔（何回ごと）のスピンボックスを作る
+        self.interval_menu.pack(side=tk.LEFT, padx=(4, 14))  # 繰り返し間隔スピンボックスをドロップダウンの右に配置する
 
         ttk.Button(opts, text="＋ タイムラインへ", style="Primary.TButton",
-                   command=self.add_to_timeline).pack(side=tk.LEFT)
-        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(8, 0))
+                   command=self.add_to_timeline).pack(side=tk.LEFT)  # タイムラインへ追加するプライマリボタンを配置する
+        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(8, 0))  # あとでやるリストへ追加するボタンを配置する
 
     def _build_timeline(self, frame: ttk.Frame) -> None:
         """今日のカレンダー（デイビュー）（row 2, col 0）。
@@ -313,35 +313,35 @@ class PlannerApp:
         1 日表示に近い見た目で、空き時間は「ブロックが無い余白」として
         そのまま見える。
         """
-        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)
-        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 9))
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)  # カレンダーカード全体を包むフレームを作る
+        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 9))  # カレンダーカードを左列に配置する
+        panel.columnconfigure(0, weight=1)  # カレンダー本体が横いっぱいに広がるよう列 0 を伸縮させる
+        panel.rowconfigure(1, weight=1)  # Canvas 行だけをウィンドウ高さに合わせて伸縮させる
 
         ttk.Label(panel, text="🗓 今日のカレンダー", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 10))
+            row=0, column=0, sticky="w", pady=(0, 10))  # 「今日のカレンダー」見出しを左上に配置する
 
-        body = ttk.Frame(panel, style="Card.TFrame")
-        body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
+        body = ttk.Frame(panel, style="Card.TFrame")  # Canvas とスクロールバーをまとめるフレームを作る
+        body.grid(row=1, column=0, sticky="nsew")  # Canvas フレームをカード内に伸縮配置する
+        body.columnconfigure(0, weight=1)  # Canvas が横いっぱいに広がるよう列 0 を伸縮させる
+        body.rowconfigure(0, weight=1)  # Canvas が縦いっぱいに広がるよう行 0 を伸縮させる
         # timeline_tree という名前は後方互換のため踏襲（実体はカレンダー Canvas）。
         self.timeline_tree = tk.Canvas(body, bg=theme.CARD, highlightthickness=0,
-                                       height=12 * theme.HOUR_HEIGHT)
-        self.timeline_tree.grid(row=0, column=0, sticky="nsew")
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.timeline_tree.yview)
-        self.timeline_tree.configure(yscrollcommand=sb.set)
-        sb.grid(row=0, column=1, sticky="ns")
+                                       height=12 * theme.HOUR_HEIGHT)  # カレンダーを描く Canvas を作る（初期高さは 12 時間分）
+        self.timeline_tree.grid(row=0, column=0, sticky="nsew")  # Canvas を四辺いっぱいに配置する
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.timeline_tree.yview)  # Canvas の縦スクロールバーを作る
+        self.timeline_tree.configure(yscrollcommand=sb.set)  # スクロールバーと Canvas を連動させる
+        sb.grid(row=0, column=1, sticky="ns")  # スクロールバーを Canvas の右端に配置する
         # クリックでブロック選択、リサイズで実幅を反映して再描画する。
-        self.timeline_tree.bind("<Button-1>", self._on_timeline_click)
-        self.timeline_tree.bind("<Configure>", self._on_timeline_resize)
+        self.timeline_tree.bind("<Button-1>", self._on_timeline_click)  # 左クリックイベントをブロック選択ハンドラに紐づける
+        self.timeline_tree.bind("<Configure>", self._on_timeline_resize)  # サイズ変更イベントをリサイズハンドラに紐づける
 
-        actions = ttk.Frame(panel, style="Card.TFrame")
-        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        actions = ttk.Frame(panel, style="Card.TFrame")  # カレンダー操作ボタンをまとめるフレームを作る
+        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))  # 操作ボタンをカレンダー下に左詰めで配置する
         ttk.Button(actions, text="✓ 完了", style="Primary.TButton",
-                   command=self.complete_timeline_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(8, 0))
+                   command=self.complete_timeline_selected).pack(side=tk.LEFT)  # 選択タスクを完了するプライマリボタンを配置する
+        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(8, 0))  # 選択タスクをバックログへ移動するボタンを配置する
+        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(8, 0))  # 選択タスクを削除するボタンを配置する
 
     def _build_backlog(self, frame: ttk.Frame) -> None:
         """あとでやるリスト（row 2, col 1）。白いカードにまとめる。"""
