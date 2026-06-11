@@ -94,7 +94,7 @@ class PlannerApp:
 
         # 既定開始時刻は「次の 5 分刻み」。分が繰り上がるときは時・日も繰り上げ、
         # 過去時刻が初期値にならないようにする（add_to_timeline は当日固定のため）。
-        start = self._default_start(datetime.datetime.now())
+        start = self._default_start(self._get_now())  # 現在日時を経由メソッド経由で取得して初期開始時刻を計算する
         self.title_var = tk.StringVar()
         self.hour_var = tk.StringVar(value=f"{start.hour:02d}")
         self.minute_var = tk.StringVar(value=f"{start.minute:02d}")
@@ -113,6 +113,10 @@ class PlannerApp:
 
     # ------------------------------------------------------------ 設定アクセス
 
+    def _get_now(self) -> datetime.datetime:
+        """現在日時を返す（テスト時にオーバーライドして時刻を差し替えられるようにする）。"""
+        return datetime.datetime.now()  # システムの現在日時を取得して返す
+
     @staticmethod
     def _default_start(now: datetime.datetime) -> datetime.datetime:
         """既定の開始時刻（次の 5 分刻み）を返す。時・日も適切に繰り上げる。"""
@@ -121,7 +125,7 @@ class PlannerApp:
 
     def _planner_today(self, now: datetime.datetime | None = None) -> datetime.date:
         """現在のプランナー日を返す（夜間レンジは就寝境界まで前日扱い）。"""
-        now = now or datetime.datetime.now()
+        now = now or self._get_now()  # 引数省略時は現在日時を経由メソッドで取得する
         return planner_day(now, self._wake_min(), self._sleep_min())
 
     def _wake_min(self) -> int:
@@ -507,7 +511,7 @@ class PlannerApp:
             # 統計の二重計上や繰り返しタスクの重複生成を防ぐ。
             self.status_var.set(f"「{task.title}」は既に完了しています。")
             return
-        completed_at = datetime.datetime.now()
+        completed_at = self._get_now()  # 完了日時として現在日時を経由メソッド経由で取得する
         self._cancel_job(task.id)
         task.completed = True
         task.completed_at = completed_at.strftime(ISO_FMT)
@@ -615,7 +619,7 @@ class PlannerApp:
         # クリック判定用（x0,y0,x1,y1, チェックボックス領域, task.id, 完了フラグ）。
         self._tl_blocks = []
         wake_min, sleep_min = self._wake_min(), self._sleep_min()
-        now = datetime.datetime.now()
+        now = self._get_now()  # 現在日時を経由メソッドで取得して現在位置ラインの描画に使う
         # 論理的な 1 日の範囲（夜間レンジの翌日跨ぎ込み）は build_day_timeline と
         # 同じ day_bounds を使い、窓の算出元を一本化する（ズレ防止）。
         day_start, day_end = day_bounds(today, wake_min, sleep_min)
@@ -865,7 +869,7 @@ class PlannerApp:
         """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。"""
         if not task.is_scheduled or task.completed:
             return
-        now = datetime.datetime.now()
+        now = self._get_now()  # 現在日時を経由メソッドで取得して通知までの遅延時間を計算する
         if task.due_dt <= now:
             return
         delay_ms = delay_ms_until(now, task.due_dt)
@@ -882,7 +886,7 @@ class PlannerApp:
         task = self._find(task_id)
         if task is None or task.completed:
             return
-        if datetime.datetime.now() < task.due_dt:  # クランプで早く起きた場合は再登録
+        if self._get_now() < task.due_dt:  # 現在日時を経由メソッドで取得して、まだ開始時刻前なら再スケジュールする
             self._schedule_task(task)
             return
         play_notification_sound(self.root, task.title)
