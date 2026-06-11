@@ -14,27 +14,27 @@ import calendar
 import datetime
 
 # 繰り返し単位の識別子。設定 JSON にもこの文字列がそのまま保存される
-RECUR_NONE = "none"
-RECUR_DAILY = "daily"
-RECUR_WEEKLY = "weekly"
-RECUR_MONTHLY = "monthly"
-RECUR_YEARLY = "yearly"
+RECUR_NONE = "none"  # 繰り返しなしを表す識別子文字列
+RECUR_DAILY = "daily"  # 毎日繰り返しを表す識別子文字列
+RECUR_WEEKLY = "weekly"  # 毎週繰り返しを表す識別子文字列
+RECUR_MONTHLY = "monthly"  # 毎月繰り返しを表す識別子文字列
+RECUR_YEARLY = "yearly"  # 毎年繰り返しを表す識別子文字列
 
 # UI / 永続化で利用する単位の一覧（表示順）
-RECUR_UNITS = (RECUR_NONE, RECUR_DAILY, RECUR_WEEKLY, RECUR_MONTHLY, RECUR_YEARLY)
+RECUR_UNITS = (RECUR_NONE, RECUR_DAILY, RECUR_WEEKLY, RECUR_MONTHLY, RECUR_YEARLY)  # 繰り返し単位を UI 表示順に並べたタプル
 
 # 単位 → 日本語ラベル。コンボボックス表示とラベル⇔値の相互変換に使用する
-RECUR_LABELS = {
-    RECUR_NONE: "なし",
-    RECUR_DAILY: "日",
-    RECUR_WEEKLY: "週",
-    RECUR_MONTHLY: "月",
-    RECUR_YEARLY: "年",
+RECUR_LABELS = {  # 単位識別子 → 日本語ラベルのマッピング辞書
+    RECUR_NONE: "なし",  # 繰り返しなしの日本語表示
+    RECUR_DAILY: "日",  # 毎日繰り返しの日本語表示
+    RECUR_WEEKLY: "週",  # 毎週繰り返しの日本語表示
+    RECUR_MONTHLY: "月",  # 毎月繰り返しの日本語表示
+    RECUR_YEARLY: "年",  # 毎年繰り返しの日本語表示
 }
 
 # 繰り返し間隔の下限・上限。UI の Spinbox 範囲と正規化ロジックで共有する
-MIN_INTERVAL = 1
-MAX_INTERVAL = 99
+MIN_INTERVAL = 1  # 繰り返し間隔の最小値（1 以上にクランプ）
+MAX_INTERVAL = 99  # 繰り返し間隔の最大値（Spinbox の上限）
 
 
 def label_for_unit(unit: str) -> str:
