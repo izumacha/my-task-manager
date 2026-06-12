@@ -141,6 +141,19 @@ class AddToTimelineTests(AppTestCase):
         self.assertEqual(app.title_var.get(), "")  # クリアされる
         self.save_tasks.assert_called()
 
+    def test_due_uses_get_now_clock(self):
+        # _get_now() を固定すると、due の繰り上げ判定も固定時刻基準になる
+        # （実時計に依存せず、時刻源が _get_now() に一元化されていることの検証）
+        app, _ = self._app()
+        fixed = datetime.datetime(2026, 6, 1, 12, 0)
+        app._get_now = lambda: fixed
+        app.title_var.set("朝活")
+        app.hour_var.set("10")
+        app.minute_var.set("00")
+        app.add_to_timeline()
+        # 固定時刻 12:00 から見て 10:00 は過去なので翌日 6/2 に繰り上がる
+        self.assertEqual(app.tasks[0].due_dt, datetime.datetime(2026, 6, 2, 10, 0))
+
 
 class AddToBacklogTests(AppTestCase):
     def test_adds_backlog_task(self):

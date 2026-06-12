@@ -450,7 +450,7 @@ class PlannerApp:
         recur_unit, interval = self._input_recurrence()  # 入力欄の繰り返し単位と間隔を正規化して取得する
         # 過去時刻が選ばれた場合は翌日へ繰り上げ、通知が必ず効くようにする
         # （前方プランナーとしての挙動。深夜 0:00 を選んだ場合も翌日になる）。
-        due = make_due(start, roll_if_past=True)  # 過去時刻なら翌日に繰り上げた due 文字列を生成する
+        due = make_due(start, now=self._get_now(), roll_if_past=True)  # 過去時刻なら翌日に繰り上げた due 文字列を生成する（基準時刻も _get_now() に一元化する）
         task = Task(title=title, due=due, duration_min=duration,
                     recur_unit=recur_unit, recur_interval=interval)  # 新しい Task オブジェクトを作る
         self.tasks.append(task)  # 作ったタスクをタスクリストに追加する
@@ -575,7 +575,7 @@ class PlannerApp:
             self.status_var.set("予定に追加するタスクを選択してください。")  # 選択を促すメッセージをステータスバーに表示する
             return  # 何もせずに処理を終える
         start = self._input_start_time()  # 入力欄の開始時刻を正規化して取得する
-        task.due = make_due(start, roll_if_past=True)  # 過去時刻なら翌日へ繰り上げた due 文字列をタスクに設定する
+        task.due = make_due(start, now=self._get_now(), roll_if_past=True)  # 過去時刻なら翌日へ繰り上げた due 文字列をタスクに設定する（基準時刻も _get_now() に一元化する）
         self._persist_tasks()  # 更新したタスクリストをファイルに保存する
         self._refresh()  # タイムライン・バックログ・統計を再描画する
         self._schedule_task(task)  # 開始時刻に通知するジョブを登録する
@@ -589,16 +589,17 @@ class PlannerApp:
         アプリを開いたまま日付（プランナー日）をまたいでも、再描画のたびに
         繰り越し・整理を行うため、未完了タスクが消えることはない。
         """
-        today = self._planner_today()  # プランナー日（今日の日付）を取得する
+        now = self._get_now()  # 再描画全体で使う現在時刻を 1 回だけ取得する（描画の途中で時刻がずれて表示が食い違わないようにする）
+        today = self._planner_today(now)  # 取得した現在時刻からプランナー日（今日の日付）を計算する
         if self._roll_over(today):  # 繰り越し・整理が発生したなら
             self._persist_tasks()  # 変更後のタスクリストをファイルに保存する
             # 繰り越しでタスクの開始時刻が未来へ移ったので、通知を再登録する
             # （開きっぱなしで日跨ぎしても繰り越し分が通知されるようにする）。
             self._schedule_all()  # 全タスクの通知ジョブを再スケジュールする
         self.date_var.set(f"今日 {today.month}/{today.day}（{_WEEKDAY_JA[today.weekday()]}）")  # ヘッダの日付ラベルを今日の日付に更新する
-        self._render_timeline(today)  # カレンダー（デイビュー）を再描画する
-        self._render_backlog(today)  # バックログリストを再描画する
-        self._render_stats(today)  # 統計ラベルを再計算して更新する
+        self._render_timeline(today, now)  # カレンダー（デイビュー）を同じ現在時刻で再描画する
+        self._render_backlog(today, now)  # バックログリストを同じ現在時刻で再描画する
+        self._render_stats(today, now)  # 統計ラベルを同じ現在時刻で再計算して更新する
 
     def _roll_over(self, today: datetime.date) -> bool:
         """プランナー日 today を基準に完了整理・繰り越しを行う。変化があれば True。"""
@@ -607,7 +608,8 @@ class PlannerApp:
         moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min())  # 期限切れタスクを今日の起床後に繰り越し、移動件数を取得する
         return moved > 0 or len(self.tasks) != before  # 繰り越しまたはタスク数に変化があれば True を返す
 
-    def _render_timeline(self, today: datetime.date) -> None:
+    def _render_timeline(self, today: datetime.date,
+                         now: datetime.datetime | None = None) -> None:
         """カレンダー（デイビュー）を Canvas に描画する。
 
         起床〜就寝を縦軸に取り、1 時間ごとの罫線と時刻ラベルを引き、
@@ -619,7 +621,7 @@ class PlannerApp:
         # クリック判定用（x0,y0,x1,y1, チェックボックス領域, task.id, 完了フラグ）。
         self._tl_blocks = []  # ブロックのクリック判定情報リストをリセットする
         wake_min, sleep_min = self._wake_min(), self._sleep_min()  # 起床・就寝時刻を「分」で取得する
-        now = self._get_now()  # 描画時点の現在時刻を _get_now() 経由で取得する
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（_refresh からは同一時刻が渡される）
         # 論理的な 1 日の範囲（夜間レンジの翌日跨ぎ込み）は build_day_timeline と
         # 同じ day_bounds を使い、窓の算出元を一本化する（ズレ防止）。
         day_start, day_end = day_bounds(today, wake_min, sleep_min)  # 今日の起床〜就寝の時刻範囲を取得する
@@ -790,7 +792,8 @@ class PlannerApp:
         if abs(event.width - self._tl_width) > 2:  # 幅の変化が 2px を超えたときだけ再描画する（微小変化はスキップする）
             self._tl_width = event.width  # 新しい Canvas 幅を記録する
             try:
-                self._render_timeline(self._planner_today())  # カレンダーを新しい幅で再描画する
+                now = self._get_now()  # リサイズ時点の現在時刻を 1 回だけ取得する（日付と now ラインのズレを防ぐ）
+                self._render_timeline(self._planner_today(now), now)  # カレンダーを新しい幅で再描画する
             except Exception:
                 logging.debug("リサイズ時のカレンダー再描画に失敗しました。")  # 例外を握りつぶしてデバッグログだけ残す
 
@@ -820,14 +823,16 @@ class PlannerApp:
             self._tl_selected = None  # 選択状態をクリアする
             self._refresh()  # カレンダーを再描画して選択解除を反映する
 
-    def _render_backlog(self, today: datetime.date) -> None:
+    def _render_backlog(self, today: datetime.date,
+                        now: datetime.datetime | None = None) -> None:
         tree = self.backlog_tree  # バックログの Treeview を取得する
         for item in tree.get_children():  # 現在表示されているすべての行を取得してループする
             tree.delete(item)  # 古い行を削除して一覧をクリアする
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（時刻源を一元化する）
         # 提案は「最大連続空き枠」に収まるものに限る（合計空きでは個々の枠に
         # 置けないタスクまで提案してしまい誤解を招くため）。
         slot = max_free_slot(self.tasks, today,
-                             self._wake_min(), self._sleep_min())  # 今日の最大連続空き枠（分）を計算する
+                             self._wake_min(), self._sleep_min(), now)  # 今日の最大連続空き枠（分）を計算する（基準時刻も _get_now() に揃える）
         suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}  # 空き枠に収まる提案タスクの ID セットを作る
         for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:  # 未予定かつ未完了のタスクをループする
             if task.id in suggestions:  # このタスクが提案対象なら
@@ -840,11 +845,13 @@ class PlannerApp:
                                 self._recur_text(task)),
                         tags=(tag,))  # タスクを Treeview の末尾に追加する
 
-    def _render_stats(self, today: datetime.date) -> None:
+    def _render_stats(self, today: datetime.date,
+                      now: datetime.datetime | None = None) -> None:
         wake, sleep = self._wake_min(), self._sleep_min()  # 起床・就寝時刻を「分」で取得する
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（時刻源を一元化する）
         done = completed_count_on(self.prefs.completions, today, wake, sleep)  # 今日の完了タスク数を集計する
         streak = current_streak(self.prefs.completions, today, wake, sleep)  # 現在の連続達成日数を計算する
-        free = free_minutes_today(self.tasks, today, wake, sleep)  # 今日の合計空き時間（分）を計算する
+        free = free_minutes_today(self.tasks, today, wake, sleep, now)  # 今日の合計空き時間（分）を計算する（基準時刻も _get_now() に揃える）
         self.stats_var.set(
             f"今日の完了 {done}件 ・ 連続 {streak}日 ・ 空き {format_duration(free)}")  # 統計文字列を組み立ててヘッダラベルに設定する
 
