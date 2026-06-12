@@ -61,7 +61,14 @@ from .timeline import (
     prune_old_completed,
     suggest_for_free_time,
 )
-from .time_utils import HOUR_MAX, HOUR_MIN, MINUTE_MAX, MINUTE_MIN, delay_ms_until
+from .time_utils import (
+    HOUR_MAX,
+    HOUR_MIN,
+    MINUTE_MAX,
+    MINUTE_MIN,
+    STATUS_IDLE,
+    delay_ms_until,
+)
 
 _WEEKDAY_JA = ("月", "火", "水", "木", "金", "土", "日")
 
@@ -77,10 +84,10 @@ class PlannerApp:
     """
 
     def __init__(self, root: tk.Tk) -> None:
-        self.root = root
-        self.tasks: list[Task] = load_tasks()
-        self.prefs: Prefs = load_prefs()
-        self.jobs: dict[str, str] = {}
+        self.root = root  # tkinter のルートウィンドウを保持する
+        self.tasks: list[Task] = load_tasks()  # 保存済みタスクをファイルから読み込む
+        self.prefs: Prefs = load_prefs()  # 起床/就寝時刻などの設定をファイルから読み込む
+        self.jobs: dict[str, str] = {}  # タスク ID → 通知ジョブ ID の対応表を空で初期化する
 
         # カレンダー（デイビュー）の選択状態と描画幅。
         # 選択は Treeview ではなく「クリックされたブロックの task.id」で管理する。
@@ -94,24 +101,28 @@ class PlannerApp:
 
         # 既定開始時刻は「次の 5 分刻み」。分が繰り上がるときは時・日も繰り上げ、
         # 過去時刻が初期値にならないようにする（add_to_timeline は当日固定のため）。
-        start = self._default_start(datetime.datetime.now())
-        self.title_var = tk.StringVar()
-        self.hour_var = tk.StringVar(value=f"{start.hour:02d}")
-        self.minute_var = tk.StringVar(value=f"{start.minute:02d}")
-        self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))
-        self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])
-        self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))
-        self.wake_var = tk.StringVar(value=str(self._wake_min() // 60))
-        self.sleep_var = tk.StringVar(value=str(self._sleep_min() // 60))
-        self.date_var = tk.StringVar()
-        self.stats_var = tk.StringVar()
-        self.status_var = tk.StringVar(value="タスクを追加してください。")
+        start = self._default_start(self._get_now())  # 現在時刻を _get_now() 経由で取得して既定の開始時刻を計算する
+        self.title_var = tk.StringVar()  # タスク名の入力フォームに紐づく変数
+        self.hour_var = tk.StringVar(value=f"{start.hour:02d}")  # 開始時刻（時）の入力フォームに紐づく変数
+        self.minute_var = tk.StringVar(value=f"{start.minute:02d}")  # 開始時刻（分）の入力フォームに紐づく変数
+        self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))  # 所要時間（分）の入力フォームに紐づく変数
+        self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])  # 繰り返し単位の選択に紐づく変数（初期値は「繰り返しなし」）
+        self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))  # 繰り返し間隔の入力フォームに紐づく変数
+        self.wake_var = tk.StringVar(value=str(self._wake_min() // 60))  # 起床時刻（時）の設定に紐づく変数
+        self.sleep_var = tk.StringVar(value=str(self._sleep_min() // 60))  # 就寝時刻（時）の設定に紐づく変数
+        self.date_var = tk.StringVar()  # ヘッダに表示する今日の日付文字列に紐づく変数
+        self.stats_var = tk.StringVar()  # ヘッダに表示する統計文字列に紐づく変数
+        self.status_var = tk.StringVar(value=STATUS_IDLE)  # 画面下部のステータスバーに紐づく変数（文言は time_utils の定数を正本とする）
 
-        self._build_ui()
-        self._refresh()
-        self._schedule_all()
+        self._build_ui()  # ウィンドウとすべての UI コンポーネントを組み立てる
+        self._refresh()  # タイムライン・バックログ・統計を初回描画する
+        self._schedule_all()  # 起動時点で未来のタスク通知をすべてスケジュールする
 
     # ------------------------------------------------------------ 設定アクセス
+
+    def _get_now(self) -> datetime.datetime:
+        """現在日時を返す。テスト時はこのメソッドをモックして時刻を固定できる。"""
+        return datetime.datetime.now()  # システムの現在日時を取得して返す（直接 now() を呼ばずここを経由する）
 
     @staticmethod
     def _default_start(now: datetime.datetime) -> datetime.datetime:
@@ -121,22 +132,22 @@ class PlannerApp:
 
     def _planner_today(self, now: datetime.datetime | None = None) -> datetime.date:
         """現在のプランナー日を返す（夜間レンジは就寝境界まで前日扱い）。"""
-        now = now or datetime.datetime.now()
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する
         return planner_day(now, self._wake_min(), self._sleep_min())
 
     def _wake_min(self) -> int:
         """設定の起床時刻を分で返す（不正値は既定値）。"""
         try:
-            return hhmm_to_min(self.prefs.wake)
+            return hhmm_to_min(self.prefs.wake)  # 設定の起床時刻文字列を「分」に変換して返す
         except (ValueError, AttributeError):
-            return 7 * 60
+            return 7 * 60  # 変換に失敗したときは朝 7:00（420 分）を返す
 
     def _sleep_min(self) -> int:
         """設定の就寝時刻を分で返す（不正値は既定値）。"""
         try:
-            return hhmm_to_min(self.prefs.sleep)
+            return hhmm_to_min(self.prefs.sleep)  # 設定の就寝時刻文字列を「分」に変換して返す
         except (ValueError, AttributeError):
-            return 23 * 60
+            return 23 * 60  # 変換に失敗したときは夜 23:00（1380 分）を返す
 
     # ------------------------------------------------------------------ UI 構築
 
@@ -147,159 +158,159 @@ class PlannerApp:
         ``clam`` テーマを基盤に選ぶ。色・フォントの実値はすべて
         :mod:`reminder.theme` 側に定義し、ここでは割り当てるだけにする。
         """
-        style = ttk.Style()
-        available = style.theme_names()
+        style = ttk.Style()  # ttk のスタイルオブジェクトを取得する
+        available = style.theme_names()  # この環境で使える ttk テーマ名の一覧を取得する
         # clam は配色を細かく変更できるため最優先。無い環境では既存テーマで継続。
-        for base in ("clam", "alt", "default"):
-            if base in available:
-                style.theme_use(base)
-                break
+        for base in ("clam", "alt", "default"):  # 優先順でテーマ名を試す
+            if base in available:  # 使えるテーマが見つかったら適用して抜ける
+                style.theme_use(base)  # 見つかったテーマを ttk に適用する
+                break  # 最初に見つかったテーマで確定するのでループを終了する
 
         # フレーム（ページ背景 / カード）
-        style.configure("App.TFrame", background=theme.BG)
-        style.configure("Card.TFrame", background=theme.CARD)
-        style.configure("Header.TFrame", background=theme.BG)
+        style.configure("App.TFrame", background=theme.BG)  # アプリ全体の背景フレームを配色トークンで設定する
+        style.configure("Card.TFrame", background=theme.CARD)  # カード型フレームの背景色を設定する
+        style.configure("Header.TFrame", background=theme.BG)  # ヘッダ用フレームの背景色を設定する
 
         # ラベル各種
         style.configure("TLabel", background=theme.BG, foreground=theme.TEXT,
-                        font=theme.FONT_BASE)
+                        font=theme.FONT_BASE)  # 標準ラベルの背景・文字色・フォントを設定する
         style.configure("Card.TLabel", background=theme.CARD, foreground=theme.TEXT,
-                        font=theme.FONT_BASE)
+                        font=theme.FONT_BASE)  # カード上のラベルの背景・文字色・フォントを設定する
         style.configure("Date.TLabel", background=theme.BG, foreground=theme.TEXT,
-                        font=theme.FONT_DATE)
+                        font=theme.FONT_DATE)  # 日付表示ラベルの背景・文字色・フォントを設定する
         style.configure("Heading.TLabel", background=theme.CARD, foreground=theme.TEXT,
-                        font=theme.FONT_HEADING)
+                        font=theme.FONT_HEADING)  # セクション見出しラベルの配色・フォントを設定する
         style.configure("Status.TLabel", background=theme.BG, foreground=theme.TEXT_MUTED,
-                        font=theme.FONT_SMALL)
+                        font=theme.FONT_SMALL)  # ステータスバーラベルの配色・フォントを設定する
         # 統計はブランド色のピル（バッジ）風に見せる。
         style.configure("Stats.TLabel", background=theme.BRAND_SOFT,
-                        foreground=theme.BRAND_DARK, font=theme.FONT_STATS, padding=(12, 6))
+                        foreground=theme.BRAND_DARK, font=theme.FONT_STATS, padding=(12, 6))  # 統計バッジラベルの配色・フォント・内側余白を設定する
 
         # 入力ウィジェット（白背景・角丸風の余白）
-        for name in ("TEntry", "TSpinbox", "TCombobox"):
+        for name in ("TEntry", "TSpinbox", "TCombobox"):  # テキスト入力系ウィジェットをまとめて設定する
             style.configure(name, fieldbackground=theme.CARD, background=theme.CARD,
                             foreground=theme.TEXT, bordercolor=theme.BORDER,
-                            arrowcolor=theme.TEXT_MUTED, padding=4)
+                            arrowcolor=theme.TEXT_MUTED, padding=4)  # 入力フィールドの背景・文字色・枠線色・内側余白を設定する
 
         # ボタン: プライマリ（ブランド色）とセカンダリ（白地）の 2 種。
         style.configure("TButton", font=theme.FONT_BASE, padding=(12, 7),
                         relief="flat", background=theme.CARD, foreground=theme.TEXT,
-                        bordercolor=theme.BORDER, focuscolor=theme.BRAND_SOFT)
+                        bordercolor=theme.BORDER, focuscolor=theme.BRAND_SOFT)  # 標準ボタン（白地）の外観を設定する
         style.map("TButton",
                   background=[("active", theme.BRAND_SOFT)],
-                  foreground=[("active", theme.BRAND_DARK)])
+                  foreground=[("active", theme.BRAND_DARK)])  # 標準ボタンのホバー時の背景・文字色を設定する
         style.configure("Primary.TButton", font=theme.FONT_BOLD, padding=(14, 8),
                         relief="flat", background=theme.BRAND,
-                        foreground=theme.TEXT_ON_BRAND, focuscolor=theme.BRAND)
+                        foreground=theme.TEXT_ON_BRAND, focuscolor=theme.BRAND)  # プライマリボタン（ブランド色）の外観を設定する
         style.map("Primary.TButton",
                   background=[("active", theme.BRAND_DARK), ("pressed", theme.BRAND_DARK)],
-                  foreground=[("active", theme.TEXT_ON_BRAND)])
+                  foreground=[("active", theme.TEXT_ON_BRAND)])  # プライマリボタンのホバー・押下時の色を設定する
 
         # Treeview（タイムライン / バックログ）
         style.configure("Treeview", background=theme.CARD, fieldbackground=theme.CARD,
                         foreground=theme.TEXT, rowheight=theme.ROW_HEIGHT,
-                        borderwidth=0, font=theme.FONT_BASE)
+                        borderwidth=0, font=theme.FONT_BASE)  # Treeview の背景・行高さ・フォントを設定する
         style.configure("Treeview.Heading", background=theme.BG, foreground=theme.TEXT_MUTED,
-                        relief="flat", font=theme.FONT_SMALL, padding=(8, 6))
-        style.map("Treeview.Heading", background=[("active", theme.BORDER)])
+                        relief="flat", font=theme.FONT_SMALL, padding=(8, 6))  # Treeview の列見出しの配色・フォントを設定する
+        style.map("Treeview.Heading", background=[("active", theme.BORDER)])  # Treeview 列見出しのホバー時の背景色を設定する
         style.map("Treeview",
                   background=[("selected", theme.BRAND_SOFT)],
-                  foreground=[("selected", theme.BRAND_DARK)])
+                  foreground=[("selected", theme.BRAND_DARK)])  # Treeview の選択行の背景・文字色を設定する
 
         # スピンボックスの矢印・スクロールバーも基調に合わせる。
         style.configure("Vertical.TScrollbar", background=theme.BG,
                         troughcolor=theme.BG, bordercolor=theme.BG,
-                        arrowcolor=theme.TEXT_MUTED)
+                        arrowcolor=theme.TEXT_MUTED)  # 縦スクロールバーの配色を設定する
 
     def _build_ui(self) -> None:
         """ウィンドウとすべての UI コンポーネントを構築する。"""
-        self.root.title("my-task-manager")
-        _set_window_icon(self.root)
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.title("my-task-manager")  # ウィンドウのタイトルバーにアプリ名を設定する
+        _set_window_icon(self.root)  # ウィンドウのアイコン画像を設定する
+        self.root.columnconfigure(0, weight=1)  # 列 0 をウィンドウ幅に合わせて伸縮させる
+        self.root.rowconfigure(0, weight=1)  # 行 0 をウィンドウ高さに合わせて伸縮させる
         try:
-            self.root.configure(bg=theme.BG)
-            self.root.minsize(900, 540)
+            self.root.configure(bg=theme.BG)  # ウィンドウ全体の背景色をテーマ色に設定する
+            self.root.minsize(900, 540)  # ウィンドウを縮小できる最小サイズを設定する
         except Exception:
-            logging.debug("ルートウィンドウの背景設定に失敗しました。")
+            logging.debug("ルートウィンドウの背景設定に失敗しました。")  # 失敗してもクラッシュさせずデバッグログに記録する
 
-        self._apply_style()
+        self._apply_style()  # ttk のスタイル（配色・フォント）を一括で設定する
 
-        frame = ttk.Frame(self.root, padding=18, style="App.TFrame")
-        frame.grid(sticky="nsew")
-        frame.columnconfigure(0, weight=3, uniform="cols")
-        frame.columnconfigure(1, weight=2, uniform="cols")
-        frame.rowconfigure(2, weight=1)
+        frame = ttk.Frame(self.root, padding=18, style="App.TFrame")  # アプリ全体を包む外側フレームを作る
+        frame.grid(sticky="nsew")  # フレームをウィンドウの四辺いっぱいに配置する
+        frame.columnconfigure(0, weight=3, uniform="cols")  # 左列（タイムライン）を比率 3 で伸縮させる
+        frame.columnconfigure(1, weight=2, uniform="cols")  # 右列（バックログ）を比率 2 で伸縮させる
+        frame.rowconfigure(2, weight=1)  # タイムライン/バックログの行だけをウィンドウ高さに合わせて伸縮させる
 
-        self._build_header(frame)   # row 0
-        self._build_input(frame)    # row 1
-        self._build_timeline(frame)  # row 2 col 0
-        self._build_backlog(frame)  # row 2 col 1
-        self._build_status(frame)   # row 3
+        self._build_header(frame)   # row 0  # ヘッダ（日付・起床/就寝・統計）を組み立てる
+        self._build_input(frame)    # row 1  # タスク追加フォームを組み立てる
+        self._build_timeline(frame)  # row 2 col 0  # カレンダー（デイビュー）を組み立てる
+        self._build_backlog(frame)  # row 2 col 1  # あとでやるリストを組み立てる
+        self._build_status(frame)   # row 3  # ステータスバーを組み立てる
 
-        self.root.bind("<Return>", lambda _e: self.add_to_timeline())
-        self.title_entry.focus_set()
+        self.root.bind("<Return>", lambda _e: self.add_to_timeline())  # Enter キーでタスクをタイムラインに追加できるようにする
+        self.title_entry.focus_set()  # 起動直後にタスク名入力欄にフォーカスを当てる
 
     def _build_header(self, frame: ttk.Frame) -> None:
         """日付・起床/就寝・統計を表示するヘッダ（row 0）。"""
-        header = ttk.Frame(frame, style="Header.TFrame")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        header.columnconfigure(2, weight=1)
+        header = ttk.Frame(frame, style="Header.TFrame")  # ヘッダ全体を包むフレームを作る
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))  # ヘッダを 2 列幅で横いっぱいに配置する
+        header.columnconfigure(2, weight=1)  # 起床/就寝スピンボックスを右寄せにするため列 2 を伸縮させる
 
-        ttk.Label(header, text="📅", style="Date.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="📅", style="Date.TLabel").grid(row=0, column=0, sticky="w")  # カレンダーアイコンを左端に配置する
         ttk.Label(header, textvariable=self.date_var, style="Date.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(6, 0))
+            row=0, column=1, sticky="w", padx=(6, 0))  # 今日の日付ラベルをアイコンの右に配置する
 
-        rng = ttk.Frame(header, style="Header.TFrame")
-        rng.grid(row=0, column=2, sticky="e", padx=(16, 12))
-        ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)
+        rng = ttk.Frame(header, style="Header.TFrame")  # 起床/就寝スピンボックスをまとめるフレームを作る
+        rng.grid(row=0, column=2, sticky="e", padx=(16, 12))  # 起床/就寝フレームをヘッダ右側に配置する
+        ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)  # 起床ラベルを左詰めで配置する
         self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=0, to=23,
-                                     width=3, format="%02.0f", command=self._on_range_change)
-        self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)
+                                     width=3, format="%02.0f", command=self._on_range_change)  # 起床時刻を 0〜23 時で選ぶスピンボックスを作る
+        self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))  # 起床スピンボックスをラベルの右に配置する
+        ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)  # 就寝ラベルを左詰めで配置する
         self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=0, to=23,
-                                      width=3, format="%02.0f", command=self._on_range_change)
-        self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))
-        self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())
-        self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())
+                                      width=3, format="%02.0f", command=self._on_range_change)  # 就寝時刻を 0〜23 時で選ぶスピンボックスを作る
+        self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))  # 就寝スピンボックスをラベルの右に配置する
+        self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 起床スピンボックスからフォーカスが外れたとき設定を反映する
+        self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 就寝スピンボックスからフォーカスが外れたとき設定を反映する
 
         ttk.Label(header, textvariable=self.stats_var, style="Stats.TLabel").grid(
-            row=0, column=3, sticky="e")
+            row=0, column=3, sticky="e")  # 統計バッジをヘッダ右端に配置する
 
     def _build_input(self, frame: ttk.Frame) -> None:
         """タスク追加フォーム（row 1）。白いカードにまとめる。"""
-        card = ttk.Frame(frame, style="Card.TFrame", padding=12)
-        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        card.columnconfigure(0, weight=1)
+        card = ttk.Frame(frame, style="Card.TFrame", padding=12)  # タスク追加フォームを包むカードフレームを作る
+        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))  # カードを 2 列幅で横いっぱいに配置する
+        card.columnconfigure(0, weight=1)  # タスク名入力欄が残りの幅を占めるよう列 0 を伸縮させる
 
-        self.title_entry = ttk.Entry(card, textvariable=self.title_var, font=theme.FONT_BASE)
-        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=3)
+        self.title_entry = ttk.Entry(card, textvariable=self.title_var, font=theme.FONT_BASE)  # タスク名のテキスト入力欄を作る
+        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=3)  # タスク名入力欄を横いっぱいに配置する
 
-        opts = ttk.Frame(card, style="Card.TFrame")
-        opts.grid(row=0, column=1)
-        ttk.Label(opts, text="⏰ 開始", style="Card.TLabel").pack(side=tk.LEFT)
+        opts = ttk.Frame(card, style="Card.TFrame")  # 時刻・所要時間・繰り返し・ボタンをまとめるフレームを作る
+        opts.grid(row=0, column=1)  # オプションフレームをタスク名入力欄の右に配置する
+        ttk.Label(opts, text="⏰ 開始", style="Card.TLabel").pack(side=tk.LEFT)  # 「開始」ラベルを左詰めで配置する
         self.hour_menu = ttk.Spinbox(opts, textvariable=self.hour_var, from_=HOUR_MIN, to=HOUR_MAX,
-                                     wrap=True, width=3, format="%02.0f")
-        self.hour_menu.pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Label(opts, text=":", style="Card.TLabel").pack(side=tk.LEFT)
+                                     wrap=True, width=3, format="%02.0f")  # 開始時刻の「時」スピンボックスを作る
+        self.hour_menu.pack(side=tk.LEFT, padx=(4, 0))  # 「時」スピンボックスをラベルの右に配置する
+        ttk.Label(opts, text=":", style="Card.TLabel").pack(side=tk.LEFT)  # 時と分の区切り「:」を配置する
         self.minute_menu = ttk.Spinbox(opts, textvariable=self.minute_var, from_=MINUTE_MIN,
-                                       to=MINUTE_MAX, wrap=True, width=3, format="%02.0f")
-        self.minute_menu.pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Label(opts, text="⏳ 所要(分)", style="Card.TLabel").pack(side=tk.LEFT)
+                                       to=MINUTE_MAX, wrap=True, width=3, format="%02.0f")  # 開始時刻の「分」スピンボックスを作る
+        self.minute_menu.pack(side=tk.LEFT, padx=(0, 12))  # 「分」スピンボックスを「:」の右に配置する
+        ttk.Label(opts, text="⏳ 所要(分)", style="Card.TLabel").pack(side=tk.LEFT)  # 「所要(分)」ラベルを左詰めで配置する
         self.dur_menu = ttk.Spinbox(opts, textvariable=self.dur_var, from_=MIN_DURATION,
-                                    to=MAX_DURATION, increment=5, width=5)
-        self.dur_menu.pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(opts, text="🔁 繰り返し", style="Card.TLabel").pack(side=tk.LEFT)
+                                    to=MAX_DURATION, increment=5, width=5)  # 所要時間（分）のスピンボックスを 5 分刻みで作る
+        self.dur_menu.pack(side=tk.LEFT, padx=(4, 12))  # 所要時間スピンボックスをラベルの右に配置する
+        ttk.Label(opts, text="🔁 繰り返し", style="Card.TLabel").pack(side=tk.LEFT)  # 「繰り返し」ラベルを左詰めで配置する
         self.recur_menu = ttk.Combobox(opts, textvariable=self.recur_var, state="readonly",
-                                       width=5, values=[RECUR_LABELS[u] for u in RECUR_UNITS])
-        self.recur_menu.pack(side=tk.LEFT, padx=(4, 0))
+                                       width=5, values=[RECUR_LABELS[u] for u in RECUR_UNITS])  # 繰り返し単位を選ぶドロップダウンを作る
+        self.recur_menu.pack(side=tk.LEFT, padx=(4, 0))  # 繰り返しドロップダウンをラベルの右に配置する
         self.interval_menu = ttk.Spinbox(opts, textvariable=self.interval_var, from_=MIN_INTERVAL,
-                                         to=MAX_INTERVAL, width=3)
-        self.interval_menu.pack(side=tk.LEFT, padx=(4, 14))
+                                         to=MAX_INTERVAL, width=3)  # 繰り返し間隔（何回ごと）のスピンボックスを作る
+        self.interval_menu.pack(side=tk.LEFT, padx=(4, 14))  # 繰り返し間隔スピンボックスをドロップダウンの右に配置する
 
         ttk.Button(opts, text="＋ タイムラインへ", style="Primary.TButton",
-                   command=self.add_to_timeline).pack(side=tk.LEFT)
-        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(8, 0))
+                   command=self.add_to_timeline).pack(side=tk.LEFT)  # タイムラインへ追加するプライマリボタンを配置する
+        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(8, 0))  # あとでやるリストへ追加するボタンを配置する
 
     def _build_timeline(self, frame: ttk.Frame) -> None:
         """今日のカレンダー（デイビュー）（row 2, col 0）。
@@ -309,70 +320,70 @@ class PlannerApp:
         1 日表示に近い見た目で、空き時間は「ブロックが無い余白」として
         そのまま見える。
         """
-        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)
-        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 9))
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)  # カレンダーカード全体を包むフレームを作る
+        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 9))  # カレンダーカードを左列に配置する
+        panel.columnconfigure(0, weight=1)  # カレンダー本体が横いっぱいに広がるよう列 0 を伸縮させる
+        panel.rowconfigure(1, weight=1)  # Canvas 行だけをウィンドウ高さに合わせて伸縮させる
 
         ttk.Label(panel, text="🗓 今日のカレンダー", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 10))
+            row=0, column=0, sticky="w", pady=(0, 10))  # 「今日のカレンダー」見出しを左上に配置する
 
-        body = ttk.Frame(panel, style="Card.TFrame")
-        body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
+        body = ttk.Frame(panel, style="Card.TFrame")  # Canvas とスクロールバーをまとめるフレームを作る
+        body.grid(row=1, column=0, sticky="nsew")  # Canvas フレームをカード内に伸縮配置する
+        body.columnconfigure(0, weight=1)  # Canvas が横いっぱいに広がるよう列 0 を伸縮させる
+        body.rowconfigure(0, weight=1)  # Canvas が縦いっぱいに広がるよう行 0 を伸縮させる
         # timeline_tree という名前は後方互換のため踏襲（実体はカレンダー Canvas）。
         self.timeline_tree = tk.Canvas(body, bg=theme.CARD, highlightthickness=0,
-                                       height=12 * theme.HOUR_HEIGHT)
-        self.timeline_tree.grid(row=0, column=0, sticky="nsew")
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.timeline_tree.yview)
-        self.timeline_tree.configure(yscrollcommand=sb.set)
-        sb.grid(row=0, column=1, sticky="ns")
+                                       height=12 * theme.HOUR_HEIGHT)  # カレンダーを描く Canvas を作る（初期高さは 12 時間分）
+        self.timeline_tree.grid(row=0, column=0, sticky="nsew")  # Canvas を四辺いっぱいに配置する
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.timeline_tree.yview)  # Canvas の縦スクロールバーを作る
+        self.timeline_tree.configure(yscrollcommand=sb.set)  # スクロールバーと Canvas を連動させる
+        sb.grid(row=0, column=1, sticky="ns")  # スクロールバーを Canvas の右端に配置する
         # クリックでブロック選択、リサイズで実幅を反映して再描画する。
-        self.timeline_tree.bind("<Button-1>", self._on_timeline_click)
-        self.timeline_tree.bind("<Configure>", self._on_timeline_resize)
+        self.timeline_tree.bind("<Button-1>", self._on_timeline_click)  # 左クリックイベントをブロック選択ハンドラに紐づける
+        self.timeline_tree.bind("<Configure>", self._on_timeline_resize)  # サイズ変更イベントをリサイズハンドラに紐づける
 
-        actions = ttk.Frame(panel, style="Card.TFrame")
-        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        actions = ttk.Frame(panel, style="Card.TFrame")  # カレンダー操作ボタンをまとめるフレームを作る
+        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))  # 操作ボタンをカレンダー下に左詰めで配置する
         ttk.Button(actions, text="✓ 完了", style="Primary.TButton",
-                   command=self.complete_timeline_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(8, 0))
+                   command=self.complete_timeline_selected).pack(side=tk.LEFT)  # 選択タスクを完了するプライマリボタンを配置する
+        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(8, 0))  # 選択タスクをバックログへ移動するボタンを配置する
+        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(8, 0))  # 選択タスクを削除するボタンを配置する
 
     def _build_backlog(self, frame: ttk.Frame) -> None:
         """あとでやるリスト（row 2, col 1）。白いカードにまとめる。"""
-        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)
-        panel.grid(row=2, column=1, sticky="nsew")
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)  # あとでやるカード全体を包むフレームを作る
+        panel.grid(row=2, column=1, sticky="nsew")  # グリッドの右下エリアに上下左右いっぱい配置する
+        panel.columnconfigure(0, weight=1)  # 列 0 を横幅に合わせて伸縮させる
+        panel.rowconfigure(1, weight=1)  # 行 1（リスト行）を縦幅に合わせて伸縮させる
 
         ttk.Label(panel, text="🌙 あとでやる", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 10))
+            row=0, column=0, sticky="w", pady=(0, 10))  # 「あとでやる」セクションの見出しラベルを配置する
 
-        body = ttk.Frame(panel, style="Card.TFrame")
-        body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
+        body = ttk.Frame(panel, style="Card.TFrame")  # リスト部分を包む内部フレームを作る
+        body.grid(row=1, column=0, sticky="nsew")  # 見出しの下に上下左右いっぱい配置する
+        body.columnconfigure(0, weight=1)  # リスト列を横幅に合わせて伸縮させる
+        body.rowconfigure(0, weight=1)  # リスト行を縦幅に合わせて伸縮させる
         self.backlog_tree = ttk.Treeview(body, columns=("title", "dur", "info"),
-                                         show="headings", height=12)
-        self.backlog_tree.heading("title", text="タスク")
-        self.backlog_tree.heading("dur", text="所要")
-        self.backlog_tree.heading("info", text="繰り返し")
-        self.backlog_tree.column("title", width=170, anchor="w")
-        self.backlog_tree.column("dur", width=70, anchor="center", stretch=False)
-        self.backlog_tree.column("info", width=80, anchor="center", stretch=False)
-        self.backlog_tree.grid(row=0, column=0, sticky="nsew")
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.backlog_tree.yview)
-        self.backlog_tree.configure(yscrollcommand=sb.set)
-        sb.grid(row=0, column=1, sticky="ns")
-        self._configure_row_tags(self.backlog_tree)
+                                         show="headings", height=12)  # あとでやるタスクを表示する Treeview を作る
+        self.backlog_tree.heading("title", text="タスク")  # タスク名列の見出しを設定する
+        self.backlog_tree.heading("dur", text="所要")  # 所要時間列の見出しを設定する
+        self.backlog_tree.heading("info", text="繰り返し")  # 繰り返し設定列の見出しを設定する
+        self.backlog_tree.column("title", width=170, anchor="w")  # タスク名列の幅と文字揃えを設定する
+        self.backlog_tree.column("dur", width=70, anchor="center", stretch=False)  # 所要時間列の幅を固定して中央揃えにする
+        self.backlog_tree.column("info", width=80, anchor="center", stretch=False)  # 繰り返し列の幅を固定して中央揃えにする
+        self.backlog_tree.grid(row=0, column=0, sticky="nsew")  # Treeview を body フレームに上下左右いっぱい配置する
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.backlog_tree.yview)  # Treeview の縦スクロールバーを作る
+        self.backlog_tree.configure(yscrollcommand=sb.set)  # スクロールバーと Treeview を連動させる
+        sb.grid(row=0, column=1, sticky="ns")  # スクロールバーを Treeview の右に上下いっぱい配置する
+        self._configure_row_tags(self.backlog_tree)  # 提案色・カテゴリ色のタグを Treeview に設定する
 
-        actions = ttk.Frame(panel, style="Card.TFrame")
-        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        actions = ttk.Frame(panel, style="Card.TFrame")  # 操作ボタンを並べるフレームを作る
+        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))  # ボタン行をリストの下に左詰めで配置する
         ttk.Button(actions, text="＋ 予定に追加", style="Primary.TButton",
-                   command=self.schedule_backlog_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="✓ 完了", command=self.complete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="🗑 削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))
+                   command=self.schedule_backlog_selected).pack(side=tk.LEFT)  # バックログタスクをタイムラインに追加するプライマリボタンを配置する
+        ttk.Button(actions, text="✓ 完了", command=self.complete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))  # バックログタスクを完了するボタンを右隣に配置する
+        ttk.Button(actions, text="🗑 削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))  # バックログタスクを削除するボタンを右隣に配置する
 
     def _configure_row_tags(self, tree: ttk.Treeview) -> None:
         """バックログ（Treeview）の行タグ（提案色・カテゴリ色）を設定する。
@@ -381,15 +392,15 @@ class PlannerApp:
         スタイリングは `_block_colors` 側に集約している。ここではバックログが使う
         「提案」と「カテゴリ色」のタグだけを設定する。
         """
-        tree.tag_configure("suggest", foreground=theme.SUGGEST_FG, font=theme.FONT_BOLD)
+        tree.tag_configure("suggest", foreground=theme.SUGGEST_FG, font=theme.FONT_BOLD)  # 提案タスクの行を太字・強調色で表示するタグを登録する
         # TimeTree 風のカテゴリ色（タスクごとに安定した彩り）。
-        for i, (bg, fg) in enumerate(theme.CATEGORY_COLORS):
-            tree.tag_configure(f"cat{i}", background=bg, foreground=fg)
+        for i, (bg, fg) in enumerate(theme.CATEGORY_COLORS):  # 全カテゴリ色ペアを番号付きでループする
+            tree.tag_configure(f"cat{i}", background=bg, foreground=fg)  # カテゴリ番号ごとに背景色と文字色のタグを登録する
 
     def _build_status(self, frame: ttk.Frame) -> None:
         """ステータスラベル（row 3）。"""
         ttk.Label(frame, textvariable=self.status_var, style="Status.TLabel").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))  # ステータスメッセージを表示するラベルを画面下部に配置する
 
     # ------------------------------------------------------------ 入力正規化
 
@@ -397,185 +408,185 @@ class PlannerApp:
     def _coerce_int(raw: str, min_value: int, max_value: int) -> int:
         """文字列を整数に変換し、[min_value, max_value] にクランプして返す。"""
         try:
-            value = int(raw)
+            value = int(raw)  # 文字列を整数に変換する（失敗したら except 節へ）
         except (TypeError, ValueError):
-            return min_value
-        return max(min_value, min(max_value, value))
+            return min_value  # 変換に失敗したときは最小値を返す（非数値のフォールバック）
+        return max(min_value, min(max_value, value))  # 最小・最大の範囲に収めて返す
 
     def _input_start_time(self) -> datetime.time:
         """入力欄の開始時刻を正規化して time として返す。"""
-        h = self._coerce_int(self.hour_var.get(), HOUR_MIN, HOUR_MAX)
-        m = self._coerce_int(self.minute_var.get(), MINUTE_MIN, MINUTE_MAX)
-        self.hour_var.set(f"{h:02d}")
-        self.minute_var.set(f"{m:02d}")
-        return datetime.time(h, m)
+        h = self._coerce_int(self.hour_var.get(), HOUR_MIN, HOUR_MAX)  # 入力欄の「時」を取得して有効範囲にクランプする
+        m = self._coerce_int(self.minute_var.get(), MINUTE_MIN, MINUTE_MAX)  # 入力欄の「分」を取得して有効範囲にクランプする
+        self.hour_var.set(f"{h:02d}")  # クランプ後の「時」を 2 桁ゼロ埋めで入力欄に書き戻す
+        self.minute_var.set(f"{m:02d}")  # クランプ後の「分」を 2 桁ゼロ埋めで入力欄に書き戻す
+        return datetime.time(h, m)  # 正規化した時・分を time オブジェクトとして返す
 
     def _input_duration(self) -> int:
         """入力欄の所要時間（分）を正規化して返す。"""
-        d = self._coerce_int(self.dur_var.get(), MIN_DURATION, MAX_DURATION)
-        self.dur_var.set(str(d))
-        return d
+        d = self._coerce_int(self.dur_var.get(), MIN_DURATION, MAX_DURATION)  # 入力欄の所要時間を取得して有効範囲にクランプする
+        self.dur_var.set(str(d))  # クランプ後の値を入力欄に書き戻す
+        return d  # 正規化した所要時間（分）を返す
 
     def _input_recurrence(self) -> tuple[str, int]:
         """入力欄の繰り返し単位・間隔を返す。"""
-        interval = self._coerce_int(self.interval_var.get(), MIN_INTERVAL, MAX_INTERVAL)
-        self.interval_var.set(str(interval))
-        return unit_for_label(self.recur_var.get()), interval
+        interval = self._coerce_int(self.interval_var.get(), MIN_INTERVAL, MAX_INTERVAL)  # 入力欄の繰り返し間隔を取得して有効範囲にクランプする
+        self.interval_var.set(str(interval))  # クランプ後の間隔を入力欄に書き戻す
+        return unit_for_label(self.recur_var.get()), interval  # 繰り返し単位の内部コードと間隔のタプルを返す
 
     def _on_range_change(self) -> None:
         """起床/就寝の変更を設定へ反映し、タイムラインを再描画する。"""
-        wake = self._coerce_int(self.wake_var.get(), 0, 23)
-        sleep = self._coerce_int(self.sleep_var.get(), 0, 23)
-        self.wake_var.set(f"{wake:02d}")
-        self.sleep_var.set(f"{sleep:02d}")
-        self.prefs.wake = min_to_hhmm(wake * 60)
-        self.prefs.sleep = min_to_hhmm(sleep * 60)
-        save_prefs(self.prefs)
-        self._refresh()
+        wake = self._coerce_int(self.wake_var.get(), 0, 23)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
+        sleep = self._coerce_int(self.sleep_var.get(), 0, 23)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
+        self.wake_var.set(f"{wake:02d}")  # クランプ後の起床時刻を 2 桁で入力欄に書き戻す
+        self.sleep_var.set(f"{sleep:02d}")  # クランプ後の就寝時刻を 2 桁で入力欄に書き戻す
+        self.prefs.wake = min_to_hhmm(wake * 60)  # 起床時刻を「分」→「HH:MM」文字列に変換して設定に保存する
+        self.prefs.sleep = min_to_hhmm(sleep * 60)  # 就寝時刻を「分」→「HH:MM」文字列に変換して設定に保存する
+        save_prefs(self.prefs)  # 更新した設定をファイルに永続化する
+        self._refresh()  # タイムライン・バックログ・統計を再描画する
 
     # ------------------------------------------------------------ タスク追加
 
     def add_to_timeline(self) -> None:
         """入力内容で当日のタイムラインにタスクを追加する。"""
-        title = self.title_var.get().strip()
-        if not title:
-            messagebox.showwarning("入力エラー", "タスク名を入力してください。")
-            return
-        start = self._input_start_time()
-        duration = self._input_duration()
-        recur_unit, interval = self._input_recurrence()
+        title = self.title_var.get().strip()  # 入力欄のタスク名を取得して前後の空白を除去する
+        if not title:  # タスク名が空のときは
+            messagebox.showwarning("入力エラー", "タスク名を入力してください。")  # 警告ダイアログを表示してユーザーに入力を促す
+            return  # タスクを追加せずに処理を終える
+        start = self._input_start_time()  # 入力欄の開始時刻を正規化して取得する
+        duration = self._input_duration()  # 入力欄の所要時間を正規化して取得する
+        recur_unit, interval = self._input_recurrence()  # 入力欄の繰り返し単位と間隔を正規化して取得する
         # 過去時刻が選ばれた場合は翌日へ繰り上げ、通知が必ず効くようにする
         # （前方プランナーとしての挙動。深夜 0:00 を選んだ場合も翌日になる）。
-        due = make_due(start, roll_if_past=True)
+        due = make_due(start, now=self._get_now(), roll_if_past=True)  # 過去時刻なら翌日に繰り上げた due 文字列を生成する（基準時刻も _get_now() に一元化する）
         task = Task(title=title, due=due, duration_min=duration,
-                    recur_unit=recur_unit, recur_interval=interval)
-        self.tasks.append(task)
-        self._persist_tasks()
-        self._refresh()
-        self._schedule_task(task)
-        self.title_var.set("")
-        self.status_var.set(f"「{title}」を {start.hour:02d}:{start.minute:02d} に追加しました。")
-        logging.info("タイムラインに追加: %s（%s, %d分）", title, due, duration)
+                    recur_unit=recur_unit, recur_interval=interval)  # 新しい Task オブジェクトを作る
+        self.tasks.append(task)  # 作ったタスクをタスクリストに追加する
+        self._persist_tasks()  # 更新したタスクリストをファイルに保存する
+        self._refresh()  # タイムラインと統計を再描画する
+        self._schedule_task(task)  # 開始時刻に通知するジョブを登録する
+        self.title_var.set("")  # タスク名入力欄を空にリセットする
+        self.status_var.set(f"「{title}」を {start.hour:02d}:{start.minute:02d} に追加しました。")  # 追加完了メッセージをステータスバーに表示する
+        logging.info("タイムラインに追加: %s（%s, %d分）", title, due, duration)  # 追加内容をログに記録する
 
     def add_to_backlog(self) -> None:
         """入力内容で「あとでやる」にタスクを追加する（時間は割り当てない）。"""
-        title = self.title_var.get().strip()
-        if not title:
-            messagebox.showwarning("入力エラー", "タスク名を入力してください。")
-            return
-        duration = self._input_duration()
-        recur_unit, interval = self._input_recurrence()
+        title = self.title_var.get().strip()  # 入力欄のタスク名を取得して前後の空白を除去する
+        if not title:  # タスク名が空のときは
+            messagebox.showwarning("入力エラー", "タスク名を入力してください。")  # 警告ダイアログを表示する
+            return  # タスクを追加せずに処理を終える
+        duration = self._input_duration()  # 入力欄の所要時間を正規化して取得する
+        recur_unit, interval = self._input_recurrence()  # 入力欄の繰り返し設定を取得する
         task = Task(title=title, due="", duration_min=duration,
-                    recur_unit=recur_unit, recur_interval=interval)
-        self.tasks.append(task)
-        self._persist_tasks()
-        self._refresh()
-        self.title_var.set("")
-        self.status_var.set(f"「{title}」を「あとでやる」に追加しました。")
-        logging.info("あとでやるに追加: %s（%d分）", title, duration)
+                    recur_unit=recur_unit, recur_interval=interval)  # 開始時刻なし（due=""）の Task オブジェクトを作る
+        self.tasks.append(task)  # 作ったタスクをタスクリストに追加する
+        self._persist_tasks()  # 更新したタスクリストをファイルに保存する
+        self._refresh()  # バックログリストと統計を再描画する
+        self.title_var.set("")  # タスク名入力欄を空にリセットする
+        self.status_var.set(f"「{title}」を「あとでやる」に追加しました。")  # 追加完了メッセージをステータスバーに表示する
+        logging.info("あとでやるに追加: %s（%d分）", title, duration)  # 追加内容をログに記録する
 
     # ------------------------------------------------------------ タスク操作
 
     def _find(self, task_id: str | None) -> Task | None:
-        return next((t for t in self.tasks if t.id == task_id), None)
+        return next((t for t in self.tasks if t.id == task_id), None)  # task_id が一致するタスクをリストから探して返す（見つからなければ None）
 
     def _selected(self, tree) -> Task | None:
-        selection = tree.selection()
-        if not selection:
-            return None
-        return self._find(selection[0])
+        selection = tree.selection()  # Treeview で現在選択されている行の ID 一覧を取得する
+        if not selection:  # 何も選択されていなければ
+            return None  # None を返して呼び出し元に知らせる
+        return self._find(selection[0])  # 最初の選択行の ID でタスクを検索して返す
 
     def _timeline_selected(self) -> Task | None:
         """カレンダーで選択中のタスクを返す（未選択なら None）。"""
         return self._find(self._tl_selected)
 
     def complete_timeline_selected(self) -> None:
-        task = self._timeline_selected()
-        self._complete(task)
+        task = self._timeline_selected()  # カレンダーで選択中のタスクを取得する
+        self._complete(task)  # タスクを完了処理に渡す
 
     def complete_backlog_selected(self) -> None:
-        task = self._selected(self.backlog_tree)
-        self._complete(task)
+        task = self._selected(self.backlog_tree)  # バックログリストで選択中のタスクを取得する
+        self._complete(task)  # タスクを完了処理に渡す
 
     def _complete(self, task: Task | None) -> None:
         """タスクを完了し、統計に記録する。繰り返しなら次回を再登録する。"""
-        if task is None:
-            self.status_var.set("完了するタスクを選択してください。")
-            return
-        if task.completed:
+        if task is None:  # 選択中タスクがなければ
+            self.status_var.set("完了するタスクを選択してください。")  # 選択を促すメッセージをステータスバーに表示する
+            return  # 何もせずに処理を終える
+        if task.completed:  # 既に完了済みのタスクなら
             # 完了済みタスクはタイムラインに残るため、再度押下されても
             # 統計の二重計上や繰り返しタスクの重複生成を防ぐ。
-            self.status_var.set(f"「{task.title}」は既に完了しています。")
-            return
-        completed_at = datetime.datetime.now()
-        self._cancel_job(task.id)
-        task.completed = True
-        task.completed_at = completed_at.strftime(ISO_FMT)
+            self.status_var.set(f"「{task.title}」は既に完了しています。")  # 既に完了済みである旨をステータスバーに表示する
+            return  # 二重完了を防いで処理を終える
+        completed_at = self._get_now()  # 完了した瞬間の時刻を _get_now() 経由で取得する
+        self._cancel_job(task.id)  # このタスクの保留中通知ジョブをキャンセルする
+        task.completed = True  # タスクの完了フラグを立てる
+        task.completed_at = completed_at.strftime(ISO_FMT)  # 完了日時を ISO 形式の文字列で記録する
 
         # 統計（完了履歴）に記録
-        self.prefs.completions.append(task.completed_at)
-        save_prefs(self.prefs)
+        self.prefs.completions.append(task.completed_at)  # 完了日時を設定の履歴リストに追加する
+        save_prefs(self.prefs)  # 更新した設定（完了履歴）をファイルに保存する
 
-        next_task = build_next_task(task, completed_at)
-        if next_task is not None:
-            self.tasks.append(next_task)
-            self._persist_tasks()
-            self._refresh()
-            self._schedule_task(next_task)
+        next_task = build_next_task(task, completed_at)  # 繰り返しタスクの場合は次回タスクを生成する（繰り返しなしなら None）
+        if next_task is not None:  # 次回タスクが生成されたなら
+            self.tasks.append(next_task)  # 次回タスクをタスクリストに追加する
+            self._persist_tasks()  # 更新したタスクリストをファイルに保存する
+            self._refresh()  # タイムライン・バックログ・統計を再描画する
+            self._schedule_task(next_task)  # 次回タスクの通知をスケジュールする
             self.status_var.set(
-                f"「{task.title}」を完了。次回は {next_task.due_dt:%m/%d %H:%M} に再設定しました。")
-            logging.info("繰り返しタスクを再登録: %s → %s", task.title, next_task.due)
-        else:
-            self._persist_tasks()
-            self._refresh()
-            self.status_var.set(f"「{task.title}」を完了しました。")
-            logging.info("タスクを完了: %s", task.title)
+                f"「{task.title}」を完了。次回は {next_task.due_dt:%m/%d %H:%M} に再設定しました。")  # 次回日時を含む完了メッセージをステータスバーに表示する
+            logging.info("繰り返しタスクを再登録: %s → %s", task.title, next_task.due)  # 再登録内容をログに記録する
+        else:  # 繰り返しなし（次回タスクがない）なら
+            self._persist_tasks()  # 完了済みタスクリストをファイルに保存する
+            self._refresh()  # タイムライン・バックログ・統計を再描画する
+            self.status_var.set(f"「{task.title}」を完了しました。")  # 完了メッセージをステータスバーに表示する
+            logging.info("タスクを完了: %s", task.title)  # 完了したタスク名をログに記録する
 
     def delete_timeline_selected(self) -> None:
-        self._delete(self._timeline_selected())
+        self._delete(self._timeline_selected())  # カレンダーで選択中のタスクを削除処理に渡す
 
     def delete_backlog_selected(self) -> None:
-        self._delete(self._selected(self.backlog_tree))
+        self._delete(self._selected(self.backlog_tree))  # バックログリストで選択中のタスクを削除処理に渡す
 
     def _delete(self, task: Task | None) -> None:
-        if task is None:
-            self.status_var.set("削除するタスクを選択してください。")
-            return
-        self._cancel_job(task.id)
-        self.tasks = [t for t in self.tasks if t.id != task.id]
+        if task is None:  # 選択中タスクがなければ
+            self.status_var.set("削除するタスクを選択してください。")  # 選択を促すメッセージをステータスバーに表示する
+            return  # 何もせずに処理を終える
+        self._cancel_job(task.id)  # このタスクの保留中通知ジョブをキャンセルする
+        self.tasks = [t for t in self.tasks if t.id != task.id]  # 削除対象以外のタスクだけを残す新しいリストを作る
         if self._tl_selected == task.id:  # 消えたタスクの選択を残さない
-            self._tl_selected = None
-        self._persist_tasks()
-        self._refresh()
-        self.status_var.set(f"「{task.title}」を削除しました。")
+            self._tl_selected = None  # カレンダー上の選択状態をクリアする
+        self._persist_tasks()  # 更新したタスクリストをファイルに保存する
+        self._refresh()  # タイムライン・バックログ・統計を再描画する
+        self.status_var.set(f"「{task.title}」を削除しました。")  # 削除完了メッセージをステータスバーに表示する
 
     def move_to_backlog(self) -> None:
         """タイムライン上のタスクを「あとでやる」へ戻す（時間を外す）。"""
-        task = self._timeline_selected()
-        if task is None:
-            self.status_var.set("移動するタスクを選択してください。")
-            return
-        self._cancel_job(task.id)
-        task.due = ""
+        task = self._timeline_selected()  # カレンダーで選択中のタスクを取得する
+        if task is None:  # タスクが選択されていなければ
+            self.status_var.set("移動するタスクを選択してください。")  # 選択を促すメッセージをステータスバーに表示する
+            return  # 何もせずに処理を終える
+        self._cancel_job(task.id)  # このタスクの保留中通知ジョブをキャンセルする
+        task.due = ""  # 開始時刻を空にしてバックログ（未予定）扱いにする
         # バックログへ移すとカレンダーから消えるため、タイムラインの選択を解除する。
         # （残すと完了/削除ボタンが見えないバックログ項目を操作してしまう。）
-        self._tl_selected = None
-        self._persist_tasks()
-        self._refresh()
-        self.status_var.set(f"「{task.title}」を「あとでやる」へ移動しました。")
+        self._tl_selected = None  # カレンダー上の選択状態をクリアする
+        self._persist_tasks()  # 更新したタスクリストをファイルに保存する
+        self._refresh()  # タイムライン・バックログ・統計を再描画する
+        self.status_var.set(f"「{task.title}」を「あとでやる」へ移動しました。")  # 移動完了メッセージをステータスバーに表示する
 
     def schedule_backlog_selected(self) -> None:
         """「あとでやる」のタスクを、入力欄の開始時刻で当日のタイムラインへ。"""
-        task = self._selected(self.backlog_tree)
-        if task is None:
-            self.status_var.set("予定に追加するタスクを選択してください。")
-            return
-        start = self._input_start_time()
-        task.due = make_due(start, roll_if_past=True)
-        self._persist_tasks()
-        self._refresh()
-        self._schedule_task(task)
-        self.status_var.set(f"「{task.title}」を {start.hour:02d}:{start.minute:02d} に予定しました。")
+        task = self._selected(self.backlog_tree)  # バックログリストで選択中のタスクを取得する
+        if task is None:  # タスクが選択されていなければ
+            self.status_var.set("予定に追加するタスクを選択してください。")  # 選択を促すメッセージをステータスバーに表示する
+            return  # 何もせずに処理を終える
+        start = self._input_start_time()  # 入力欄の開始時刻を正規化して取得する
+        task.due = make_due(start, now=self._get_now(), roll_if_past=True)  # 過去時刻なら翌日へ繰り上げた due 文字列をタスクに設定する（基準時刻も _get_now() に一元化する）
+        self._persist_tasks()  # 更新したタスクリストをファイルに保存する
+        self._refresh()  # タイムライン・バックログ・統計を再描画する
+        self._schedule_task(task)  # 開始時刻に通知するジョブを登録する
+        self.status_var.set(f"「{task.title}」を {start.hour:02d}:{start.minute:02d} に予定しました。")  # 予定設定完了メッセージをステータスバーに表示する
 
     # ------------------------------------------------------------ 表示
 
@@ -585,72 +596,74 @@ class PlannerApp:
         アプリを開いたまま日付（プランナー日）をまたいでも、再描画のたびに
         繰り越し・整理を行うため、未完了タスクが消えることはない。
         """
-        today = self._planner_today()
-        if self._roll_over(today):
-            self._persist_tasks()
+        now = self._get_now()  # 再描画全体で使う現在時刻を 1 回だけ取得する（描画の途中で時刻がずれて表示が食い違わないようにする）
+        today = self._planner_today(now)  # 取得した現在時刻からプランナー日（今日の日付）を計算する
+        if self._roll_over(today):  # 繰り越し・整理が発生したなら
+            self._persist_tasks()  # 変更後のタスクリストをファイルに保存する
             # 繰り越しでタスクの開始時刻が未来へ移ったので、通知を再登録する
             # （開きっぱなしで日跨ぎしても繰り越し分が通知されるようにする）。
-            self._schedule_all()
-        self.date_var.set(f"今日 {today.month}/{today.day}（{_WEEKDAY_JA[today.weekday()]}）")
-        self._render_timeline(today)
-        self._render_backlog(today)
-        self._render_stats(today)
+            self._schedule_all()  # 全タスクの通知ジョブを再スケジュールする
+        self.date_var.set(f"今日 {today.month}/{today.day}（{_WEEKDAY_JA[today.weekday()]}）")  # ヘッダの日付ラベルを今日の日付に更新する
+        self._render_timeline(today, now)  # カレンダー（デイビュー）を同じ現在時刻で再描画する
+        self._render_backlog(today, now)  # バックログリストを同じ現在時刻で再描画する
+        self._render_stats(today, now)  # 統計ラベルを同じ現在時刻で再計算して更新する
 
     def _roll_over(self, today: datetime.date) -> bool:
         """プランナー日 today を基準に完了整理・繰り越しを行う。変化があれば True。"""
-        before = len(self.tasks)
-        self.tasks = prune_old_completed(self.tasks, today)
-        moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min())
-        return moved > 0 or len(self.tasks) != before
+        before = len(self.tasks)  # 整理前のタスク数を記録して変化を検知するために保存する
+        self.tasks = prune_old_completed(self.tasks, today)  # 古い完了済みタスクをリストから除去する
+        moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min())  # 期限切れタスクを今日の起床後に繰り越し、移動件数を取得する
+        return moved > 0 or len(self.tasks) != before  # 繰り越しまたはタスク数に変化があれば True を返す
 
-    def _render_timeline(self, today: datetime.date) -> None:
+    def _render_timeline(self, today: datetime.date,
+                         now: datetime.datetime | None = None) -> None:
         """カレンダー（デイビュー）を Canvas に描画する。
 
         起床〜就寝を縦軸に取り、1 時間ごとの罫線と時刻ラベルを引き、
         各タスクを「開始位置 y・所要時間ぶんの高さ」を持つ色付きブロックで
         配置する。重なるタスクは横に並べて見えなくならないようにする。
         """
-        cv = self.timeline_tree
-        cv.delete("all")
+        cv = self.timeline_tree  # カレンダーを描く Canvas を取得する
+        cv.delete("all")  # 前回の描画内容をすべて消去する
         # クリック判定用（x0,y0,x1,y1, チェックボックス領域, task.id, 完了フラグ）。
-        self._tl_blocks = []
-        wake_min, sleep_min = self._wake_min(), self._sleep_min()
-        now = datetime.datetime.now()
+        self._tl_blocks = []  # ブロックのクリック判定情報リストをリセットする
+        wake_min, sleep_min = self._wake_min(), self._sleep_min()  # 起床・就寝時刻を「分」で取得する
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（_refresh からは同一時刻が渡される）
         # 論理的な 1 日の範囲（夜間レンジの翌日跨ぎ込み）は build_day_timeline と
         # 同じ day_bounds を使い、窓の算出元を一本化する（ズレ防止）。
-        day_start, day_end = day_bounds(today, wake_min, sleep_min)
+        day_start, day_end = day_bounds(today, wake_min, sleep_min)  # 今日の起床〜就寝の時刻範囲を取得する
 
-        rows = build_day_timeline(self.tasks, today, wake_min, sleep_min, now)
-        task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]
+        rows = build_day_timeline(self.tasks, today, wake_min, sleep_min, now)  # 今日のタイムライン行データを構築する
+        task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]  # タスク行だけを抜き出す
 
         # 起床前/就寝後に始まる・終わるタスクも必ず可視範囲に含める。
         # （設定変更や時間外スケジュールでブロックが見切れて操作不能になるのを防ぐ。）
-        window_start = min([day_start] + [r.start for r in task_rows])
-        window_end = max([day_end] + [r.end for r in task_rows])
+        window_start = min([day_start] + [r.start for r in task_rows])  # 表示ウィンドウの開始時刻（タスク開始と起床時刻の早い方）を決める
+        window_end = max([day_end] + [r.end for r in task_rows])  # 表示ウィンドウの終了時刻（タスク終了と就寝時刻の遅い方）を決める
 
-        scale = theme.HOUR_HEIGHT / 60.0
+        scale = theme.HOUR_HEIGHT / 60.0  # 1 分あたりのピクセル数を計算する
 
         def y_of(dt: datetime.datetime) -> float:
-            return theme.CAL_PAD_TOP + (dt - window_start).total_seconds() / 60.0 * scale
+            return theme.CAL_PAD_TOP + (dt - window_start).total_seconds() / 60.0 * scale  # 日時を Canvas の y 座標（ピクセル）に変換する
 
-        width = max(self._tl_width, theme.CAL_GUTTER + 80)
-        self._draw_time_grid(cv, window_start, window_end, width, y_of)
+        width = max(self._tl_width, theme.CAL_GUTTER + 80)  # 描画幅を Canvas の現在幅と最小幅の大きい方にする
+        self._draw_time_grid(cv, window_start, window_end, width, y_of)  # 正時の罫線と時刻ラベルを描く
 
-        lanes = self._assign_lanes(task_rows)
-        lane_count = (max(lanes.values()) + 1) if lanes else 1
-        area_left = theme.CAL_GUTTER
-        area_w = width - area_left - theme.CAL_BLOCK_GAP
-        lane_w = area_w / lane_count
-        for row in task_rows:
-            self._draw_task_block(cv, row, y_of, lanes[row.task.id], lane_w, area_left)
+        lanes = self._assign_lanes(task_rows)  # 重なるタスクをレーン（横列）に割り当てる
+        lane_count = (max(lanes.values()) + 1) if lanes else 1  # 必要なレーン数を計算する（最大レーン番号 +1）
+        area_left = theme.CAL_GUTTER  # タスクブロックを置くエリアの左端位置（時刻ラベル分の余白）を設定する
+        area_w = width - area_left - theme.CAL_BLOCK_GAP  # タスクブロックを置けるエリアの横幅を計算する
+        lane_w = area_w / lane_count  # 1 レーンあたりの幅を計算する
+        for row in task_rows:  # タスク行を 1 件ずつループして
+            self._draw_task_block(cv, row, y_of, lanes[row.task.id], lane_w, area_left)  # 各タスクのカードブロックを Canvas に描く
 
-        self._draw_now_line(cv, now, window_start, window_end, y_of, width)
+        self._draw_now_line(cv, now, window_start, window_end, y_of, width)  # 現在時刻を示す now ラインを描く
 
         # scrollregion はブロック描画後に確定する。最低高を確保した短いタスクが
         # window_end を超えて伸びても、下端とチェックボックスが見切れないようにする。
-        content_bottom = max([y_of(window_end)] + [b[3] for b in self._tl_blocks])
-        height = int(content_bottom + theme.CAL_PAD_TOP)
-        cv.configure(scrollregion=(0, 0, width, height))
+        content_bottom = max([y_of(window_end)] + [b[3] for b in self._tl_blocks])  # 全ブロックの下端と表示ウィンドウ終端（window_end）の遅い方をコンテンツ底辺とする
+        height = int(content_bottom + theme.CAL_PAD_TOP)  # 下余白を加えた Canvas 総高さを計算する
+        cv.configure(scrollregion=(0, 0, width, height))  # Canvas のスクロール可能領域を確定させる
 
     def _draw_time_grid(self, cv, window_start, window_end, width, y_of) -> None:
         """正時（と 30 分）の罫線・時刻ラベルを、実際の時刻に合わせて描く。
@@ -658,35 +671,35 @@ class PlannerApp:
         起床が 07:30 のような非正時でも、罫線は実際の時計の正時に引き、
         ラベルもその時刻（HH:00）を表示するため、ブロック位置とズレない。
         """
-        first_hour = window_start.replace(minute=0, second=0, microsecond=0)
-        if first_hour < window_start:
-            first_hour += datetime.timedelta(hours=1)
-        t = first_hour
-        while t <= window_end:
-            y = y_of(t)
-            cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.GRID_LINE)
+        first_hour = window_start.replace(minute=0, second=0, microsecond=0)  # 表示開始時刻の「正時」（HH:00:00）を求める
+        if first_hour < window_start:  # 正時が表示開始より前なら（例: 起床が 07:30 なら 07:00 は範囲外）
+            first_hour += datetime.timedelta(hours=1)  # 次の正時（08:00）から罫線を引くようにする
+        t = first_hour  # 最初に罫線を引く正時を設定する
+        while t <= window_end:  # 表示終了時刻まで 1 時間ずつ繰り返す
+            y = y_of(t)  # この正時の y 座標を計算する
+            cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.GRID_LINE)  # 正時の水平罫線を描く
             cv.create_text(theme.CAL_GUTTER - 8, y, anchor="e", text=f"{t.hour:02d}:00",
-                           fill=theme.GRID_LABEL, font=theme.FONT_SMALL)
-            half = t + datetime.timedelta(minutes=30)
-            if half < window_end:
+                           fill=theme.GRID_LABEL, font=theme.FONT_SMALL)  # 罫線の左に時刻ラベル（HH:00）を描く
+            half = t + datetime.timedelta(minutes=30)  # 30 分後の時刻を計算する
+            if half < window_end:  # 30 分線が表示範囲内なら
                 cv.create_line(theme.CAL_GUTTER, y_of(half), width, y_of(half),
-                               fill=theme.GRID_LINE_HALF)
-            t += datetime.timedelta(hours=1)
+                               fill=theme.GRID_LINE_HALF)  # 30 分の補助線（薄い罫線）を描く
+            t += datetime.timedelta(hours=1)  # 次の正時に進む
 
     @staticmethod
     def _assign_lanes(task_rows) -> dict[str, int]:
         """重なり合うタスクを横レーンに割り当てる（task.id → レーン番号）。"""
-        lanes: dict[str, int] = {}
-        active: list[tuple] = []  # (end_datetime, lane)
-        for row in sorted(task_rows, key=lambda r: r.start):
-            used = {lane for end, lane in active if end > row.start}
-            active = [(end, lane) for end, lane in active if end > row.start]
-            lane = 0
-            while lane in used:
-                lane += 1
-            lanes[row.task.id] = lane
-            active.append((row.end, lane))
-        return lanes
+        lanes: dict[str, int] = {}  # タスク ID → レーン番号の対応辞書を初期化する
+        active: list[tuple] = []  # (end_datetime, lane) 現在進行中のタスクリストを初期化する
+        for row in sorted(task_rows, key=lambda r: r.start):  # タスクを開始時刻の早い順に処理する
+            used = {lane for end, lane in active if end > row.start}  # このタスクと重なっているレーン番号の集合を取得する
+            active = [(end, lane) for end, lane in active if end > row.start]  # 終了済みのタスクをアクティブリストから除去する
+            lane = 0  # 最小のレーン番号 0 から探す
+            while lane in used:  # そのレーンが使用中なら
+                lane += 1  # 次のレーン番号を試す
+            lanes[row.task.id] = lane  # このタスクのレーン番号を確定して記録する
+            active.append((row.end, lane))  # 終了時刻とレーン番号をアクティブリストに追加する
+        return lanes  # タスク ID → レーン番号の辞書を返す
 
     def _draw_task_block(self, cv, row, y_of, lane: int, lane_w: float,
                          area_left: float) -> None:
@@ -695,86 +708,86 @@ class PlannerApp:
         左端にカテゴリ色のストライプ、その右に丸いチェックボックス（完了は ✓ 入り）、
         さらに右にタイトルと時刻を置く。クリック判定用の座標を記録する。
         """
-        task = row.task
-        y0 = y_of(row.start)
+        task = row.task  # このブロックに対応するタスクオブジェクトを取得する
+        y0 = y_of(row.start)  # タスク開始時刻の y 座標を計算する
         y1 = max(y_of(row.end), y0 + 24)  # 最低限の高さを確保
-        x0 = area_left + lane * lane_w + theme.CAL_BLOCK_GAP
-        x1 = area_left + (lane + 1) * lane_w - theme.CAL_BLOCK_GAP
+        x0 = area_left + lane * lane_w + theme.CAL_BLOCK_GAP  # ブロック左端の x 座標を計算する（レーン位置と余白から）
+        x1 = area_left + (lane + 1) * lane_w - theme.CAL_BLOCK_GAP  # ブロック右端の x 座標を計算する
 
-        fill, accent, text_color = self._block_colors(task, row.status)
-        is_selected = task.id == self._tl_selected
-        outline = theme.BRAND_DARK if is_selected else theme.BORDER
-        ow = 3 if is_selected else 1
+        fill, accent, text_color = self._block_colors(task, row.status)  # タスクの状態（完了・進行中・過去など）に応じた配色を取得する
+        is_selected = task.id == self._tl_selected  # このタスクが現在選択中かどうかを判定する
+        outline = theme.BRAND_DARK if is_selected else theme.BORDER  # 選択中なら強調色、それ以外は通常の枠色を使う
+        ow = 3 if is_selected else 1  # 選択中は枠線を太く（3px）、それ以外は細く（1px）する
         # カード本体（角丸）とカテゴリ色の左ストライプ。
         self._rounded_rect(cv, x0, y0, x1, y1, r=theme.CAL_RADIUS, fill=fill,
-                           outline=outline, width=ow, tags=("task", task.id))
+                           outline=outline, width=ow, tags=("task", task.id))  # タスクカード本体（角丸長方形）を描く
         self._rounded_rect(cv, x0 + 3, y0 + 4, x0 + 3 + theme.CAL_STRIPE_W, y1 - 4,
                            r=theme.CAL_STRIPE_W / 2, fill=accent, outline=accent,
-                           tags=("task", task.id))
+                           tags=("task", task.id))  # カードの左端にカテゴリ色のストライプを描く
 
-        tall = (y1 - y0) >= theme.CAL_MIN_TEXT_HEIGHT
-        done = row.status == STATUS_DONE
+        tall = (y1 - y0) >= theme.CAL_MIN_TEXT_HEIGHT  # カードの高さがテキスト表示の最低値以上かどうかを判定する
+        done = row.status == STATUS_DONE  # このタスクが完了済みかどうかを判定する
         # 丸いチェックボックス（未完了＝枠線のみ / 完了＝塗り＋✓）。
-        cb_cx = x0 + theme.CAL_STRIPE_W + 16
-        cb_cy = (y0 + 16) if tall else (y0 + y1) / 2
-        r = theme.CAL_CHECK_R
-        cb_box = (cb_cx - r - 3, cb_cy - r - 3, cb_cx + r + 3, cb_cy + r + 3)
-        if done:
+        cb_cx = x0 + theme.CAL_STRIPE_W + 16  # チェックボックスの中心 x 座標を計算する（ストライプ右隣）
+        cb_cy = (y0 + 16) if tall else (y0 + y1) / 2  # 高いカードは上寄り、低いカードは縦中央にチェックボックスを置く
+        r = theme.CAL_CHECK_R  # チェックボックスの半径をテーマ定数から取得する
+        cb_box = (cb_cx - r - 3, cb_cy - r - 3, cb_cx + r + 3, cb_cy + r + 3)  # クリック判定用のチェックボックス領域（少し大きめ）を定義する
+        if done:  # 完了済みなら
             cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
-                           fill=accent, outline=accent, tags=("task", task.id))
+                           fill=accent, outline=accent, tags=("task", task.id))  # アクセント色で塗りつぶした円を描く
             cv.create_text(cb_cx, cb_cy, text="✓", fill=theme.CARD,
-                           font=theme.FONT_SMALL, tags=("task", task.id))
-        else:
+                           font=theme.FONT_SMALL, tags=("task", task.id))  # 円の中にチェックマーク（✓）を描く
+        else:  # 未完了なら
             cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
-                           outline=accent, width=2, tags=("task", task.id))
+                           outline=accent, width=2, tags=("task", task.id))  # 枠線だけの円（空のチェックボックス）を描く
 
-        self._tl_blocks.append((x0, y0, x1, y1, cb_box, task.id, done))
+        self._tl_blocks.append((x0, y0, x1, y1, cb_box, task.id, done))  # クリック判定情報をリストに追加する
 
         # タイトル・時刻（チェックボックスの右）。繰り返しタスクは 🔁 を添える
         # （旧タイムラインの「繰り返し」列で示していた情報をカードでも残す）。
-        title = task.title + ("  🔁" if task.recur_unit != RECUR_NONE else "")
-        text_x = cb_cx + r + 8
-        text_w = max(int(x1 - text_x - 8), 10)
-        if tall:
+        title = task.title + ("  🔁" if task.recur_unit != RECUR_NONE else "")  # 繰り返しタスクにはタイトルの後ろに 🔁 を付ける
+        text_x = cb_cx + r + 8  # テキスト描画位置の x 座標（チェックボックスの右側）を計算する
+        text_w = max(int(x1 - text_x - 8), 10)  # テキストの折り返し幅を計算する（最低 10px）
+        if tall:  # カードが十分な高さを持つなら
             cv.create_text(text_x, y0 + 8, anchor="nw", text=title, fill=text_color,
-                           font=theme.FONT_BOLD, width=text_w, tags=("task", task.id))
+                           font=theme.FONT_BOLD, width=text_w, tags=("task", task.id))  # タイトルをカード上部に太字で描く
             cv.create_text(text_x, y1 - 7, anchor="sw",
                            text=f"{row.start:%H:%M}–{row.end:%H:%M}", fill=text_color,
-                           font=theme.FONT_SMALL, tags=("task", task.id))
-        else:
+                           font=theme.FONT_SMALL, tags=("task", task.id))  # 開始〜終了時刻をカード下部に小さく描く
+        else:  # カードが低くてテキスト 2 行分の高さがないなら
             cv.create_text(text_x, (y0 + y1) / 2, anchor="w", text=title,
                            fill=text_color, font=theme.FONT_BASE, width=text_w,
-                           tags=("task", task.id))
+                           tags=("task", task.id))  # タイトルだけを縦中央に描く
 
     @staticmethod
     def _block_colors(task: Task, status: str) -> tuple[str, str, str]:
         """ブロックの (塗り, アクセント=ストライプ/枠, 文字) 色を状態に応じて返す。"""
-        if status == STATUS_DONE:
-            return theme.DONE_BG, theme.DONE_FG, theme.DONE_FG
-        if status == STATUS_PAST:
-            return theme.PAST_BG, theme.PAST_FG, theme.PAST_FG
-        bg, fg = theme.category_color(task.id)
-        if status == STATUS_NOW:
+        if status == STATUS_DONE:  # 完了済みなら
+            return theme.DONE_BG, theme.DONE_FG, theme.DONE_FG  # 完了色（薄いグレー系）を返す
+        if status == STATUS_PAST:  # 過去（未完了の期限切れ）なら
+            return theme.PAST_BG, theme.PAST_FG, theme.PAST_FG  # 過去色（薄い赤系）を返す
+        bg, fg = theme.category_color(task.id)  # タスク ID からカテゴリ色を取得する
+        if status == STATUS_NOW:  # 進行中（現在時刻が開始〜終了の間）なら
             # 進行中はブランド色の淡いカードで強調（Any Planner 風の控えめな塗り）。
-            return theme.BRAND_SOFT, theme.BRAND, theme.BRAND_DARK
-        return bg, fg, fg
+            return theme.BRAND_SOFT, theme.BRAND, theme.BRAND_DARK  # ブランド色の配色を返す
+        return bg, fg, fg  # 通常（未来タスク）はカテゴリ色の配色を返す
 
     @staticmethod
     def _rounded_rect(cv, x0, y0, x1, y1, r, **kw):
         """角丸長方形を polygon (smooth) で描く。"""
-        r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)
+        r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)  # 角丸半径を長方形のサイズに収まるよう制限する
         pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
-               x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
-        return cv.create_polygon(pts, smooth=True, **kw)
+               x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]  # 角丸多角形の制御点リストを作る
+        return cv.create_polygon(pts, smooth=True, **kw)  # 制御点をなめらかにつないで角丸長方形を描く
 
     def _draw_now_line(self, cv, now, window_start, window_end, y_of, width) -> None:
         """現在時刻を示す横線（now ライン）を描く。"""
-        if now < window_start or now > window_end:
-            return
-        y = y_of(now)
-        cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.NOW_LINE, width=2)
+        if now < window_start or now > window_end:  # 現在時刻が表示ウィンドウ外なら
+            return  # now ラインを描かずに処理を終える
+        y = y_of(now)  # 現在時刻の y 座標を計算する
+        cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.NOW_LINE, width=2)  # 現在時刻を示す水平線を描く
         cv.create_oval(theme.CAL_GUTTER - 4, y - 4, theme.CAL_GUTTER + 4, y + 4,
-                       fill=theme.NOW_LINE, outline=theme.NOW_LINE)
+                       fill=theme.NOW_LINE, outline=theme.NOW_LINE)  # 水平線の左端に円（ドット）を描く
 
     def _on_timeline_resize(self, event) -> None:
         """Canvas の幅変更に合わせてカレンダーだけを再描画する。
@@ -783,12 +796,13 @@ class PlannerApp:
         通知再スケジュールを伴う `_refresh()` は呼ばない（リサイズのたびに
         ディスク書き込みや通知ジョブの張り直しが走るのを避ける）。ウィンドウ
         破棄中の `<Configure>` で Canvas が無効でも落ちないよう握りつぶす。"""
-        if abs(event.width - self._tl_width) > 2:
-            self._tl_width = event.width
+        if abs(event.width - self._tl_width) > 2:  # 幅の変化が 2px を超えたときだけ再描画する（微小変化はスキップする）
+            self._tl_width = event.width  # 新しい Canvas 幅を記録する
             try:
-                self._render_timeline(self._planner_today())
+                now = self._get_now()  # リサイズ時点の現在時刻を 1 回だけ取得する（日付と now ラインのズレを防ぐ）
+                self._render_timeline(self._planner_today(now), now)  # カレンダーを新しい幅で再描画する
             except Exception:
-                logging.debug("リサイズ時のカレンダー再描画に失敗しました。")
+                logging.debug("リサイズ時のカレンダー再描画に失敗しました。")  # 例外を握りつぶしてデバッグログだけ残す
 
     def _on_timeline_click(self, event) -> None:
         """カレンダーのクリックを処理する。
@@ -796,112 +810,116 @@ class PlannerApp:
         チェックボックスを押せば完了（Any Planner 風）、ブロック本体を押せば選択
         （再クリックで解除）、余白を押せば選択解除する。重なりは最前面を優先。
         """
-        cv = self.timeline_tree
-        x, y = cv.canvasx(event.x), cv.canvasy(event.y)
-        for x0, y0, x1, y1, cb_box, task_id, done in reversed(self._tl_blocks):
-            cbx0, cby0, cbx1, cby1 = cb_box
-            in_checkbox = cbx0 <= x <= cbx1 and cby0 <= y <= cby1
-            in_block = x0 <= x <= x1 and y0 <= y <= y1
+        cv = self.timeline_tree  # クリックされたカレンダー Canvas を取得する
+        x, y = cv.canvasx(event.x), cv.canvasy(event.y)  # クリック座標をスクロール込みの Canvas 座標に変換する
+        for x0, y0, x1, y1, cb_box, task_id, done in reversed(self._tl_blocks):  # 最前面（後ろに描かれた）ブロックから順に当たり判定をする
+            cbx0, cby0, cbx1, cby1 = cb_box  # チェックボックスの判定領域を取り出す
+            in_checkbox = cbx0 <= x <= cbx1 and cby0 <= y <= cby1  # クリック位置がチェックボックス内かどうかを判定する
+            in_block = x0 <= x <= x1 and y0 <= y <= y1  # クリック位置がカードブロック内かどうかを判定する
             # チェックボックスは（狭いレーンでカード幅をはみ出しても）独立に判定する。
-            if not in_checkbox and not in_block:
-                continue
-            if not done and in_checkbox:
-                self._tl_selected = task_id
+            if not in_checkbox and not in_block:  # チェックボックスにもカードにも当たらなければ
+                continue  # 次のブロックを確認する
+            if not done and in_checkbox:  # 未完了タスクのチェックボックスがクリックされたなら
+                self._tl_selected = task_id  # そのタスクを選択状態にする
                 self._complete(self._find(task_id))  # 内部で再描画される
-            else:
-                self._tl_selected = None if task_id == self._tl_selected else task_id
-                self._refresh()
-            return
+            else:  # カード本体（または完了済みチェックボックス）がクリックされたなら
+                self._tl_selected = None if task_id == self._tl_selected else task_id  # 同じタスクを再クリックで選択解除、別タスクなら選択する
+                self._refresh()  # 選択状態の変化をカレンダーに反映する
+            return  # 最前面のブロックを処理したら終了する（後ろのブロックは処理しない）
         if self._tl_selected is not None:  # 余白クリックで選択解除
-            self._tl_selected = None
-            self._refresh()
+            self._tl_selected = None  # 選択状態をクリアする
+            self._refresh()  # カレンダーを再描画して選択解除を反映する
 
-    def _render_backlog(self, today: datetime.date) -> None:
-        tree = self.backlog_tree
-        for item in tree.get_children():
-            tree.delete(item)
+    def _render_backlog(self, today: datetime.date,
+                        now: datetime.datetime | None = None) -> None:
+        tree = self.backlog_tree  # バックログの Treeview を取得する
+        for item in tree.get_children():  # 現在表示されているすべての行を取得してループする
+            tree.delete(item)  # 古い行を削除して一覧をクリアする
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（時刻源を一元化する）
         # 提案は「最大連続空き枠」に収まるものに限る（合計空きでは個々の枠に
         # 置けないタスクまで提案してしまい誤解を招くため）。
         slot = max_free_slot(self.tasks, today,
-                             self._wake_min(), self._sleep_min())
-        suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}
-        for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:
-            if task.id in suggestions:
-                title, tag = f"✨ {task.title}", "suggest"
-            else:
+                             self._wake_min(), self._sleep_min(), now)  # 今日の最大連続空き枠（分）を計算する（基準時刻も _get_now() に揃える）
+        suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}  # 空き枠に収まる提案タスクの ID セットを作る
+        for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:  # 未予定かつ未完了のタスクをループする
+            if task.id in suggestions:  # このタスクが提案対象なら
+                title, tag = f"✨ {task.title}", "suggest"  # タイトルに ✨ を付けて提案タグを設定する
+            else:  # 提案対象でないなら
                 title, tag = f"{theme.category_dot(task.id)} {task.title}", \
-                    f"cat{theme.category_index(task.id)}"
+                    f"cat{theme.category_index(task.id)}"  # カテゴリカラードットを付けてカテゴリタグを設定する
             tree.insert("", tk.END, iid=task.id,
                         values=(title, format_duration(task.duration_min),
                                 self._recur_text(task)),
-                        tags=(tag,))
+                        tags=(tag,))  # タスクを Treeview の末尾に追加する
 
-    def _render_stats(self, today: datetime.date) -> None:
-        wake, sleep = self._wake_min(), self._sleep_min()
-        done = completed_count_on(self.prefs.completions, today, wake, sleep)
-        streak = current_streak(self.prefs.completions, today, wake, sleep)
-        free = free_minutes_today(self.tasks, today, wake, sleep)
+    def _render_stats(self, today: datetime.date,
+                      now: datetime.datetime | None = None) -> None:
+        wake, sleep = self._wake_min(), self._sleep_min()  # 起床・就寝時刻を「分」で取得する
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（時刻源を一元化する）
+        done = completed_count_on(self.prefs.completions, today, wake, sleep)  # 今日の完了タスク数を集計する
+        streak = current_streak(self.prefs.completions, today, wake, sleep)  # 現在の連続達成日数を計算する
+        free = free_minutes_today(self.tasks, today, wake, sleep, now)  # 今日の合計空き時間（分）を計算する（基準時刻も _get_now() に揃える）
         self.stats_var.set(
-            f"今日の完了 {done}件 ・ 連続 {streak}日 ・ 空き {format_duration(free)}")
+            f"今日の完了 {done}件 ・ 連続 {streak}日 ・ 空き {format_duration(free)}")  # 統計文字列を組み立ててヘッダラベルに設定する
 
     @staticmethod
     def _recur_text(task: Task) -> str:
         """繰り返し設定を「2週ごと」のような表示文字列にする。"""
-        if task.recur_unit == RECUR_NONE:
-            return "—"
-        return f"{task.recur_interval}{label_for_unit(task.recur_unit)}ごと"
+        if task.recur_unit == RECUR_NONE:  # 繰り返しなしなら
+            return "—"  # ダッシュ記号を返す
+        return f"{task.recur_interval}{label_for_unit(task.recur_unit)}ごと"  # 「2週ごと」のような文字列を作って返す
 
     # ------------------------------------------------------------ スケジュール
 
     def _schedule_all(self) -> None:
         """起動時に、未来に開始するすべてのタスクの通知をスケジュールする。"""
-        for task in self.tasks:
+        for task in self.tasks:  # 全タスクをループする
             try:
-                self._schedule_task(task)
+                self._schedule_task(task)  # 各タスクの通知ジョブを登録する
             except Exception:
-                logging.warning("タスクの通知スケジュールに失敗しました: %s", task.id)
+                logging.warning("タスクの通知スケジュールに失敗しました: %s", task.id)  # 失敗してもクラッシュさせず警告ログに記録して続行する
 
     def _schedule_task(self, task: Task) -> None:
         """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。"""
-        if not task.is_scheduled or task.completed:
-            return
-        now = datetime.datetime.now()
-        if task.due_dt <= now:
-            return
-        delay_ms = delay_ms_until(now, task.due_dt)
-        self._cancel_job(task.id)
+        if not task.is_scheduled or task.completed:  # タイムラインに予定されていない、または既に完了済みなら
+            return  # 通知登録の対象外なので処理を終える
+        now = self._get_now()  # 通知スケジュール登録時点の現在時刻を _get_now() 経由で取得する
+        if task.due_dt <= now:  # 開始時刻が既に過去なら
+            return  # 通知登録しないで処理を終える
+        delay_ms = delay_ms_until(now, task.due_dt)  # 現在時刻から開始時刻までの待ち時間（ミリ秒）を計算する
+        self._cancel_job(task.id)  # 既存の古いジョブがあればキャンセルしてから新規登録する
         try:
-            self.jobs[task.id] = self.root.after(delay_ms, lambda: self._on_task_due(task.id))
+            self.jobs[task.id] = self.root.after(delay_ms, lambda: self._on_task_due(task.id))  # 指定ミリ秒後に通知コールバックを呼ぶジョブを登録し ID を記録する
         except Exception:
-            self.jobs.pop(task.id, None)
-            raise
+            self.jobs.pop(task.id, None)  # ジョブ登録に失敗したら ID を辞書から除去する
+            raise  # 例外を呼び出し元へ再送出する
 
     def _on_task_due(self, task_id: str) -> None:
         """開始時刻に呼ばれ、デスクトップ通知を出す。"""
-        self.jobs.pop(task_id, None)
-        task = self._find(task_id)
-        if task is None or task.completed:
-            return
-        if datetime.datetime.now() < task.due_dt:  # クランプで早く起きた場合は再登録
-            self._schedule_task(task)
-            return
-        play_notification_sound(self.root, task.title)
-        messagebox.showinfo("my-task-manager", f"⏰ {task.title}")
-        self._refresh()
-        self.status_var.set(f"「{task.title}」の開始時刻になりました。")
+        self.jobs.pop(task_id, None)  # 発火済みのジョブ ID を辞書から削除する
+        task = self._find(task_id)  # タスク ID でタスクを検索する
+        if task is None or task.completed:  # タスクが存在しないか既に完了済みなら
+            return  # 通知を出さずに処理を終える
+        if self._get_now() < task.due_dt:  # 現在時刻が開始時刻前ならスケジュールし直す（クランプで起動が早まった場合）
+            self._schedule_task(task)  # 通知ジョブを再登録する
+            return  # 今は通知を出さずに処理を終える
+        play_notification_sound(self.root, task.title)  # 通知音を再生する
+        messagebox.showinfo("my-task-manager", f"⏰ {task.title}")  # 開始時刻を知らせるポップアップダイアログを表示する
+        self._refresh()  # タイムライン・バックログ・統計を再描画する
+        self.status_var.set(f"「{task.title}」の開始時刻になりました。")  # 開始時刻になったことをステータスバーに表示する
 
     def _cancel_job(self, task_id: str) -> None:
         """指定タスクの保留中ジョブをキャンセルする。"""
-        job_id = self.jobs.pop(task_id, None)
-        if job_id is not None:
+        job_id = self.jobs.pop(task_id, None)  # ジョブ ID を辞書から取り出す（なければ None）
+        if job_id is not None:  # キャンセル対象のジョブが存在するなら
             try:
-                self.root.after_cancel(job_id)
+                self.root.after_cancel(job_id)  # tkinter のタイマーコールバックをキャンセルする
             except Exception:
-                logging.debug("ジョブのキャンセルに失敗しました: %s", task_id)
+                logging.debug("ジョブのキャンセルに失敗しました: %s", task_id)  # キャンセル失敗をデバッグログに記録して無視する
 
     def _persist_tasks(self) -> None:
         """現在のタスク一覧をディスクに保存する。"""
-        save_tasks(self.tasks)
+        save_tasks(self.tasks)  # タスクリストを JSON ファイルに書き出して永続化する
 
 
 # 旧名との後方互換エイリアス

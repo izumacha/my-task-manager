@@ -38,19 +38,19 @@ DEFAULT_DURATION = 30
 def _coerce_interval(value: object) -> int:
     """繰り返し間隔を [MIN_INTERVAL, MAX_INTERVAL] の整数にクランプする。"""
     try:
-        n = int(value)  # type: ignore[arg-type]
+        n = int(value)  # type: ignore[arg-type]  # 任意の型を整数に変換する（文字列や float も対応）
     except (TypeError, ValueError):
-        return MIN_INTERVAL
-    return max(MIN_INTERVAL, min(MAX_INTERVAL, n))
+        return MIN_INTERVAL  # 変換できない値（None・空文字など）は最小値 1 を返す
+    return max(MIN_INTERVAL, min(MAX_INTERVAL, n))  # 1〜99 の範囲に収まるようクランプして返す
 
 
 def _coerce_duration(value: object) -> int:
     """所要時間（分）を [MIN_DURATION, MAX_DURATION] の整数にクランプする。"""
     try:
-        n = int(value)  # type: ignore[arg-type]
+        n = int(value)  # type: ignore[arg-type]  # 任意の型を整数（分数）に変換する
     except (TypeError, ValueError):
-        return DEFAULT_DURATION
-    return max(MIN_DURATION, min(MAX_DURATION, n))
+        return DEFAULT_DURATION  # 変換できない値は既定の所要時間 30 分を返す
+    return max(MIN_DURATION, min(MAX_DURATION, n))  # 5〜1440 分の範囲に収まるようクランプして返す
 
 
 @dataclass
@@ -97,11 +97,11 @@ class Task:
         # 非空の場合のみ、パースできない値は不正なタスクとして例外を送出する。
         # これにより load_tasks() 側の個別 try-except で 1 件だけスキップでき、
         # 壊れた due を持つタスクが 1 件あってもアプリの起動を妨げない。
-        if self.due:
+        if self.due:  # 開始日時が設定されている場合のみ形式を検証する（空文字=あとでやる は検証不要）
             try:
-                datetime.datetime.strptime(self.due, ISO_FMT)
+                datetime.datetime.strptime(self.due, ISO_FMT)  # ISO 形式の文字列としてパースできるか確認する
             except (TypeError, ValueError) as e:
-                raise ValueError(f"開始日時の形式が不正です: {self.due!r}") from e
+                raise ValueError(f"開始日時の形式が不正です: {self.due!r}") from e  # パース失敗は呼び出し元にエラーを伝える
 
     @property
     def is_scheduled(self) -> bool:
@@ -153,11 +153,11 @@ def make_due(
     Returns:
         ISO_FMT 形式の開始日時文字列。
     """
-    now = now or datetime.datetime.now()
-    due = now.replace(hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0)
-    if roll_if_past and due <= now:
-        due += datetime.timedelta(days=1)
-    return due.strftime(ISO_FMT)
+    now = now or datetime.datetime.now()  # 現在日時が渡されなければシステムの現在時刻を使う
+    due = now.replace(hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0)  # 今日の指定時刻を表す日時オブジェクトを作る
+    if roll_if_past and due <= now:  # 今日の指定時刻が既に過ぎており、翌日繰り越しが有効なら
+        due += datetime.timedelta(days=1)  # 1 日後ろにずらして翌日の同時刻にする
+    return due.strftime(ISO_FMT)  # ISO 形式の文字列に変換して返す
 
 
 def build_next_task(task: Task, completed_at: datetime.datetime) -> Task | None:
@@ -174,13 +174,13 @@ def build_next_task(task: Task, completed_at: datetime.datetime) -> Task | None:
     Returns:
         次回分の未完了タスク。繰り返しなしの場合は None。
     """
-    nxt = next_occurrence(completed_at, task.recur_unit, task.recur_interval)
-    if nxt is None:
-        return None
-    return Task(
-        title=task.title,
-        due=nxt.strftime(ISO_FMT),
-        duration_min=task.duration_min,
-        recur_unit=task.recur_unit,
-        recur_interval=task.recur_interval,
+    nxt = next_occurrence(completed_at, task.recur_unit, task.recur_interval)  # 完了時刻を起点に次回の期限日時を計算する
+    if nxt is None:  # 繰り返し設定なし（RECUR_NONE）の場合は次回タスクを生成しない
+        return None  # None を返して呼び出し元に「繰り返しなし」を伝える
+    return Task(  # 次回分のタスクを新しいオブジェクトとして生成して返す
+        title=task.title,  # タスク名はそのまま引き継ぐ
+        due=nxt.strftime(ISO_FMT),  # 次回期限を ISO 形式の文字列に変換してセットする
+        duration_min=task.duration_min,  # 所要時間も引き継ぐ
+        recur_unit=task.recur_unit,  # 繰り返し単位も引き継ぐ
+        recur_interval=task.recur_interval,  # 繰り返し間隔も引き継ぐ
     )

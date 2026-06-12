@@ -9,15 +9,15 @@
 """
 from __future__ import annotations
 
-import logging
-import tkinter as tk
+import logging  # ログ出力を行うための標準ライブラリをインポートする
+import tkinter as tk  # GUI ウィンドウを作成するための tkinter をインポートする
 
-from .app import PlannerApp
+from .app import PlannerApp  # アプリ本体の PlannerApp クラスを読み込む
 
 
 def main() -> None:
     """Tk ウィンドウを生成してプランナーのイベントループを起動する。"""
-    logging.basicConfig(level=logging.INFO)
-    root = tk.Tk()
-    PlannerApp(root)
-    root.mainloop()
+    logging.basicConfig(level=logging.INFO)  # INFO レベル以上のログをコンソールに出力するよう設定する
+    root = tk.Tk()  # Tk のルートウィンドウ（アプリの親ウィンドウ）を生成する
+    PlannerApp(root)  # PlannerApp を生成してルートウィンドウにアタッチする
+    root.mainloop()  # GUI イベントループを開始する（ウィンドウが閉じられるまでここで待機する）

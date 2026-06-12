@@ -32,14 +32,14 @@ DONE_BG = "#EEF1F4"        # 完了タスクの背景
 DONE_FG = "#A7B0BE"        # 完了タスクの文字
 PAST_BG = "#FDECEC"        # 期限超過（未完了）の背景
 PAST_FG = "#E0524B"        # 期限超過の文字
-NOW_FG = TEXT_ON_BRAND     # 現在進行中の文字
-SUGGEST_FG = BRAND_DARK    # 「あとでやる」の空き時間提案
+NOW_FG = TEXT_ON_BRAND     # 現在進行中の文字（ブランド色の上に載せる白文字を参照する）
+SUGGEST_FG = BRAND_DARK    # 「あとでやる」の空き時間提案（ブランドの暗色を参照する）
 
 # ------------------------------------------------------------ タスクのカラーパレット
 
 # TimeTree のように 1 つ 1 つの予定を色分けするためのポップなパレット。
 # （背景色, その上に載せる文字色）の組で持つ。
-CATEGORY_COLORS: tuple[tuple[str, str], ...] = (
+CATEGORY_COLORS: tuple[tuple[str, str], ...] = (  # カテゴリ色パレット（背景色・文字色のペアを格納するタプル）
     ("#FFE2E0", "#C0392B"),  # コーラル
     ("#FFF1D6", "#B9770E"),  # イエロー
     ("#E3F1FF", "#2266A8"),  # スカイブルー
@@ -51,43 +51,43 @@ CATEGORY_COLORS: tuple[tuple[str, str], ...] = (
 )
 
 # 各タスク色の先頭に付ける「丸ポチ」相当の絵文字（凡例的な彩り）。
-CATEGORY_DOTS: tuple[str, ...] = ("🔴", "🟡", "🔵", "🟣", "🟢", "🩷", "🟠", "🩵")
+CATEGORY_DOTS: tuple[str, ...] = ("🔴", "🟡", "🔵", "🟣", "🟢", "🩷", "🟠", "🩵")  # カテゴリを視覚的に区別するための絵文字ドットのタプル
 
 # ------------------------------------------------------------ フォント
 
 # tkinter のフォント指定で使うファミリ。OS 既定の "system" を基本にする。
-FONT_FAMILY = "system"
-FONT_BASE = (FONT_FAMILY, 11)
-FONT_SMALL = (FONT_FAMILY, 10)
-FONT_HEADING = (FONT_FAMILY, 13, "bold")
-FONT_DATE = (FONT_FAMILY, 16, "bold")
-FONT_STATS = (FONT_FAMILY, 11, "bold")
-FONT_BOLD = (FONT_FAMILY, 11, "bold")
+FONT_FAMILY = "system"  # OS の標準フォントファミリ名を定数として定義する
+FONT_BASE = (FONT_FAMILY, 11)  # 標準サイズのフォント設定（ファミリ・サイズのタプル）
+FONT_SMALL = (FONT_FAMILY, 10)  # やや小さいフォント設定（補足テキストなどに使用する）
+FONT_HEADING = (FONT_FAMILY, 13, "bold")  # 見出し用の大きめ太字フォント設定
+FONT_DATE = (FONT_FAMILY, 16, "bold")  # 日付表示用のさらに大きい太字フォント設定
+FONT_STATS = (FONT_FAMILY, 11, "bold")  # 統計値表示用の太字フォント設定
+FONT_BOLD = (FONT_FAMILY, 11, "bold")  # 強調テキスト用の太字フォント設定
 
 # Treeview の行の高さ（ゆったり見せて可読性を上げる）。
-ROW_HEIGHT = 30
+ROW_HEIGHT = 30  # Treeview の 1 行あたりの高さ（ピクセル単位）
 
 # ------------------------------------------------------------ カレンダー（デイビュー）
 
 # 縦軸カレンダーの 1 時間あたりの高さ（px）と、左の時刻ラベル幅・上下の余白。
 # 所要時間に比例した高さのブロックでタスクを描くため、分→px の換算に使う。
-HOUR_HEIGHT = 60           # 1 時間あたりの高さ
-CAL_GUTTER = 56            # 左の時刻ラベル列の幅
-CAL_PAD_TOP = 12           # 描画の上下余白
-CAL_BLOCK_GAP = 4          # ブロック左右/相互の隙間
-GRID_LINE = "#E9EDF2"      # 正時の罫線
+HOUR_HEIGHT = 60           # 1 時間あたりの高さ（ピクセル単位）：60px = 1 時間
+CAL_GUTTER = 56            # 左の時刻ラベル列の幅（ピクセル単位）
+CAL_PAD_TOP = 12           # 描画の上下余白（ピクセル単位）
+CAL_BLOCK_GAP = 4          # ブロック左右/相互の隙間（ピクセル単位）
+GRID_LINE = "#E9EDF2"      # 正時の罫線（時境界を示す線の色）
 GRID_LINE_HALF = "#F2F5F8"  # 30 分の罫線（さらに淡く）
-GRID_LABEL = "#9AA0A6"     # 時刻ラベルの文字
+GRID_LABEL = "#9AA0A6"     # 時刻ラベルの文字（カレンダー左端に表示する時刻テキストの色）
 NOW_LINE = "#FF6F61"       # 現在時刻ライン（コーラル）
 
 # Any Planner 風のタスクカード要素。
-CAL_STRIPE_W = 5           # カード左端のカテゴリ色ストライプの幅
-CAL_CHECK_R = 7            # チェックボックス円の半径
-CAL_RADIUS = 10            # カードの角丸半径
+CAL_STRIPE_W = 5           # カード左端のカテゴリ色ストライプの幅（ピクセル単位）
+CAL_CHECK_R = 7            # チェックボックス円の半径（ピクセル単位）
+CAL_RADIUS = 10            # カードの角丸半径（ピクセル単位）
 
 # ブロックにタイトルと時刻の 2 行を載せられる最小の高さ（px）。
 # これ未満の短いタスクは、文字が重ならないようタイトルのみを 1 行で中央表示する。
-CAL_MIN_TEXT_HEIGHT = 46
+CAL_MIN_TEXT_HEIGHT = 46  # 2 行テキストを表示できる最小ブロック高さ（ピクセル単位）
 
 
 def category_index(key: str) -> int:
@@ -96,17 +96,17 @@ def category_index(key: str) -> int:
     同じ key には常に同じ色を割り当てるため、再描画やプラットフォームを
     またいでも配色がぶれない。
     """
-    if not key:
-        return 0
-    total = sum(ord(ch) for ch in key)
-    return total % len(CATEGORY_COLORS)
+    if not key:  # key が空文字列の場合はインデックス 0（最初の色）を返す
+        return 0  # 空の key に対してデフォルトのカラー番号 0 を返す
+    total = sum(ord(ch) for ch in key)  # key の各文字のコードポイントを合計して数値化する
+    return total % len(CATEGORY_COLORS)  # 合計をパレットの色数で割った余りをインデックスとして返す
 
 
 def category_color(key: str) -> tuple[str, str]:
     """key に対応する (背景色, 文字色) を返す。"""
-    return CATEGORY_COLORS[category_index(key)]
+    return CATEGORY_COLORS[category_index(key)]  # key から算出したインデックスに対応する色ペアを返す
 
 
 def category_dot(key: str) -> str:
     """key に対応する丸ポチ絵文字を返す。"""
-    return CATEGORY_DOTS[category_index(key)]
+    return CATEGORY_DOTS[category_index(key)]  # key から算出したインデックスに対応する絵文字を返す

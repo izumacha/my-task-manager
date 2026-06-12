@@ -14,40 +14,40 @@ import calendar
 import datetime
 
 # 繰り返し単位の識別子。設定 JSON にもこの文字列がそのまま保存される
-RECUR_NONE = "none"
-RECUR_DAILY = "daily"
-RECUR_WEEKLY = "weekly"
-RECUR_MONTHLY = "monthly"
-RECUR_YEARLY = "yearly"
+RECUR_NONE = "none"  # 繰り返しなしを表す識別子文字列
+RECUR_DAILY = "daily"  # 毎日繰り返しを表す識別子文字列
+RECUR_WEEKLY = "weekly"  # 毎週繰り返しを表す識別子文字列
+RECUR_MONTHLY = "monthly"  # 毎月繰り返しを表す識別子文字列
+RECUR_YEARLY = "yearly"  # 毎年繰り返しを表す識別子文字列
 
 # UI / 永続化で利用する単位の一覧（表示順）
-RECUR_UNITS = (RECUR_NONE, RECUR_DAILY, RECUR_WEEKLY, RECUR_MONTHLY, RECUR_YEARLY)
+RECUR_UNITS = (RECUR_NONE, RECUR_DAILY, RECUR_WEEKLY, RECUR_MONTHLY, RECUR_YEARLY)  # 繰り返し単位を UI 表示順に並べたタプル
 
 # 単位 → 日本語ラベル。コンボボックス表示とラベル⇔値の相互変換に使用する
-RECUR_LABELS = {
-    RECUR_NONE: "なし",
-    RECUR_DAILY: "日",
-    RECUR_WEEKLY: "週",
-    RECUR_MONTHLY: "月",
-    RECUR_YEARLY: "年",
+RECUR_LABELS = {  # 単位識別子 → 日本語ラベルのマッピング辞書
+    RECUR_NONE: "なし",  # 繰り返しなしの日本語表示
+    RECUR_DAILY: "日",  # 毎日繰り返しの日本語表示
+    RECUR_WEEKLY: "週",  # 毎週繰り返しの日本語表示
+    RECUR_MONTHLY: "月",  # 毎月繰り返しの日本語表示
+    RECUR_YEARLY: "年",  # 毎年繰り返しの日本語表示
 }
 
 # 繰り返し間隔の下限・上限。UI の Spinbox 範囲と正規化ロジックで共有する
-MIN_INTERVAL = 1
-MAX_INTERVAL = 99
+MIN_INTERVAL = 1  # 繰り返し間隔の最小値（1 以上にクランプ）
+MAX_INTERVAL = 99  # 繰り返し間隔の最大値（Spinbox の上限）
 
 
 def label_for_unit(unit: str) -> str:
     """繰り返し単位の識別子に対応する日本語ラベルを返す。未知の値は「なし」。"""
-    return RECUR_LABELS.get(unit, RECUR_LABELS[RECUR_NONE])
+    return RECUR_LABELS.get(unit, RECUR_LABELS[RECUR_NONE])  # 辞書から日本語ラベルを取得し、未知の単位は「なし」を返す
 
 
 def unit_for_label(label: str) -> str:
     """日本語ラベルから繰り返し単位の識別子を逆引きする。未知のラベルは RECUR_NONE。"""
-    for unit, text in RECUR_LABELS.items():
-        if text == label:
-            return unit
-    return RECUR_NONE
+    for unit, text in RECUR_LABELS.items():  # すべての単位とラベルの組み合わせをループする
+        if text == label:  # ラベルが一致した単位を見つけたら
+            return unit  # その単位の識別子文字列を返す
+    return RECUR_NONE  # 一致するラベルがなければ「繰り返しなし」を返す
 
 
 def _add_months(base: datetime.datetime, months: int) -> datetime.datetime:
@@ -56,12 +56,12 @@ def _add_months(base: datetime.datetime, months: int) -> datetime.datetime:
     例えば 1/31 の 1 か月後は 2/28（うるう年なら 2/29）に丸める。
     年単位の計算も months=12*年 として本関数に委譲する。
     """
-    month_index = base.month - 1 + months
-    year = base.year + month_index // 12
-    month = month_index % 12 + 1
+    month_index = base.month - 1 + months  # 0 始まりの月インデックスに変換して加算する（例: 1 月=0, 12 月=11）
+    year = base.year + month_index // 12  # インデックスが 12 以上なら年を繰り上げる（例: 14 → 翌年 2 月）
+    month = month_index % 12 + 1  # 0 始まりインデックスを 1〜12 の月番号に戻す
     # 遷移先の月の日数を超える日付（例: 31 日 → 2 月）は月末にクランプする
-    day = min(base.day, calendar.monthrange(year, month)[1])
-    return base.replace(year=year, month=month, day=day)
+    day = min(base.day, calendar.monthrange(year, month)[1])  # その月の最終日を超えないよう日付を切り詰める
+    return base.replace(year=year, month=month, day=day)  # 年・月・日だけ差し替えた新しい日時オブジェクトを返す
 
 
 def add_period(base: datetime.datetime, unit: str, interval: int = 1) -> datetime.datetime:
@@ -78,16 +78,16 @@ def add_period(base: datetime.datetime, unit: str, interval: int = 1) -> datetim
     Raises:
         ValueError: unit が加算可能な単位でない場合（RECUR_NONE を含む）。
     """
-    interval = max(MIN_INTERVAL, interval)
-    if unit == RECUR_DAILY:
-        return base + datetime.timedelta(days=interval)
-    if unit == RECUR_WEEKLY:
-        return base + datetime.timedelta(weeks=interval)
-    if unit == RECUR_MONTHLY:
-        return _add_months(base, interval)
-    if unit == RECUR_YEARLY:
-        return _add_months(base, interval * 12)
-    raise ValueError(f"加算できない繰り返し単位です: {unit!r}")
+    interval = max(MIN_INTERVAL, interval)  # 間隔が 1 未満にならないよう下限でクランプする
+    if unit == RECUR_DAILY:  # 単位が「日」なら指定日数を加算する
+        return base + datetime.timedelta(days=interval)  # timedelta で日数を足した日時を返す
+    if unit == RECUR_WEEKLY:  # 単位が「週」なら指定週数を加算する
+        return base + datetime.timedelta(weeks=interval)  # timedelta で週数を足した日時を返す
+    if unit == RECUR_MONTHLY:  # 単位が「月」なら月末クランプ付きで月数を加算する
+        return _add_months(base, interval)  # _add_months に委譲して月末超えを防ぐ
+    if unit == RECUR_YEARLY:  # 単位が「年」なら年数×12 か月分を加算する
+        return _add_months(base, interval * 12)  # 年を月に換算して _add_months に委譲する
+    raise ValueError(f"加算できない繰り返し単位です: {unit!r}")  # 未対応の単位は例外を送出する
 
 
 def next_occurrence(
@@ -103,6 +103,6 @@ def next_occurrence(
     Returns:
         次回の期限日時。繰り返しなし（RECUR_NONE）の場合は None。
     """
-    if unit == RECUR_NONE:
-        return None
-    return add_period(completed_at, unit, interval)
+    if unit == RECUR_NONE:  # 繰り返しなしの場合は次回なし（None を返す）
+        return None  # 呼び出し元で繰り返し不要と判断できるよう None を返す
+    return add_period(completed_at, unit, interval)  # 完了日時を起点に次回期限を計算して返す
