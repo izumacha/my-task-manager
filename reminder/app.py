@@ -61,7 +61,14 @@ from .timeline import (
     prune_old_completed,
     suggest_for_free_time,
 )
-from .time_utils import HOUR_MAX, HOUR_MIN, MINUTE_MAX, MINUTE_MIN, delay_ms_until
+from .time_utils import (
+    HOUR_MAX,
+    HOUR_MIN,
+    MINUTE_MAX,
+    MINUTE_MIN,
+    STATUS_IDLE,
+    delay_ms_until,
+)
 
 _WEEKDAY_JA = ("月", "火", "水", "木", "金", "土", "日")
 
@@ -105,7 +112,7 @@ class PlannerApp:
         self.sleep_var = tk.StringVar(value=str(self._sleep_min() // 60))  # 就寝時刻（時）の設定に紐づく変数
         self.date_var = tk.StringVar()  # ヘッダに表示する今日の日付文字列に紐づく変数
         self.stats_var = tk.StringVar()  # ヘッダに表示する統計文字列に紐づく変数
-        self.status_var = tk.StringVar(value="タスクを追加してください。")  # 画面下部のステータスバーに紐づく変数
+        self.status_var = tk.StringVar(value=STATUS_IDLE)  # 画面下部のステータスバーに紐づく変数（文言は time_utils の定数を正本とする）
 
         self._build_ui()  # ウィンドウとすべての UI コンポーネントを組み立てる
         self._refresh()  # タイムライン・バックログ・統計を初回描画する
