@@ -102,8 +102,8 @@ def play_notification_sound(root: tk.Tk, body: str = "") -> None:
         if system_name == "Linux":  # Linux の場合
             # notify-send は音を伴わないことがあるため、後段の bell も併せて鳴らす
             _send_linux_notification(body)  # デスクトップ通知を送信する
-    except Exception:  # OS 固有の再生処理でエラーが発生した場合
-        # OS 固有の再生に失敗した場合は bell にフォールバック
-        pass  # 例外を無視してフォールバックの bell に処理を委ねる
+    except Exception as e:  # OS 固有の再生処理でエラーが発生した場合
+        # OS 固有の再生に失敗した場合はログを残してフォールバックの bell に委ねる
+        logging.debug("通知音の再生をスキップしました: %s", e)  # デバッグログにスキップ理由を記録する
 
     _ring_bell(root)  # 最終フォールバックとして tkinter のベル音を鳴らす
