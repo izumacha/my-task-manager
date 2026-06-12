@@ -661,7 +661,7 @@ class PlannerApp:
 
         # scrollregion はブロック描画後に確定する。最低高を確保した短いタスクが
         # window_end を超えて伸びても、下端とチェックボックスが見切れないようにする。
-        content_bottom = max([y_of(window_end)] + [b[3] for b in self._tl_blocks])  # 全ブロックの下端と day_end の最大値をコンテンツ底辺とする
+        content_bottom = max([y_of(window_end)] + [b[3] for b in self._tl_blocks])  # 全ブロックの下端と表示ウィンドウ終端（window_end）の遅い方をコンテンツ底辺とする
         height = int(content_bottom + theme.CAL_PAD_TOP)  # 下余白を加えた Canvas 総高さを計算する
         cv.configure(scrollregion=(0, 0, width, height))  # Canvas のスクロール可能領域を確定させる
 
@@ -881,7 +881,7 @@ class PlannerApp:
 
     def _schedule_task(self, task: Task) -> None:
         """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。"""
-        if not task.is_scheduled or task.completed:  # タイムラインに予定されておらず完了済みでもないなら
+        if not task.is_scheduled or task.completed:  # タイムラインに予定されていない、または既に完了済みなら
             return  # 通知登録の対象外なので処理を終える
         now = self._get_now()  # 通知スケジュール登録時点の現在時刻を _get_now() 経由で取得する
         if task.due_dt <= now:  # 開始時刻が既に過去なら
