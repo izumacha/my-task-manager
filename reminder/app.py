@@ -45,6 +45,8 @@ from .task import (
     make_due,
 )
 from .timeline import (
+    DEFAULT_SLEEP_MIN,
+    DEFAULT_WAKE_MIN,
     ROW_TASK,
     STATUS_DONE,
     STATUS_NOW,
@@ -140,14 +142,14 @@ class PlannerApp:
         try:
             return hhmm_to_min(self.prefs.wake)  # 設定の起床時刻文字列を「分」に変換して返す
         except (ValueError, AttributeError):
-            return 7 * 60  # 変換に失敗したときは朝 7:00（420 分）を返す
+            return DEFAULT_WAKE_MIN  # 変換に失敗したら timeline.py の既定起床時刻（07:00）を使う
 
     def _sleep_min(self) -> int:
         """設定の就寝時刻を分で返す（不正値は既定値）。"""
         try:
             return hhmm_to_min(self.prefs.sleep)  # 設定の就寝時刻文字列を「分」に変換して返す
         except (ValueError, AttributeError):
-            return 23 * 60  # 変換に失敗したときは夜 23:00（1380 分）を返す
+            return DEFAULT_SLEEP_MIN  # 変換に失敗したら timeline.py の既定就寝時刻（23:00）を使う
 
     # ------------------------------------------------------------------ UI 構築
 
@@ -231,8 +233,9 @@ class PlannerApp:
         try:
             self.root.configure(bg=theme.BG)  # ウィンドウ全体の背景色をテーマ色に設定する
             self.root.minsize(900, 540)  # ウィンドウを縮小できる最小サイズを設定する
-        except Exception:
-            logging.debug("ルートウィンドウの背景設定に失敗しました。")  # 失敗してもクラッシュさせずデバッグログに記録する
+        except Exception as exc:  # 起動を止めないため広めに捕捉する（fail-safe）
+            # 原因調査できるよう例外の内容も一緒にデバッグログへ残す
+            logging.debug("ルートウィンドウの背景設定に失敗しました: %s", exc)
 
         self._apply_style()  # ttk のスタイル（配色・フォント）を一括で設定する
 
