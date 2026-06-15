@@ -292,6 +292,24 @@ class PruneCompletedTests(unittest.TestCase):
         tasks = [_t("壊れた完了", "2026-06-05T09:00:00", 30, completed=True, completed_at="bad")]
         self.assertEqual(len(prune_old_completed(tasks, today)), 1)
 
+    def test_overnight_completion_pruned_by_planner_day(self):
+        # 夜間レンジ 9:00-1:00。暦上 6/6 00:30 の完了は 6/5 のプランナー日に属する。
+        # stats も 6/5 扱いにするため、today=6/6 の今日タイムラインからは除去されるべき。
+        # （暦日比較のままだと done.date()=6/6 で「今日」と誤判定し残ってしまうのを防ぐ回帰テスト）
+        today = datetime.date(2026, 6, 6)
+        tasks = [_t("夜更かし完了", "2026-06-05T22:00:00", 30,
+                    completed=True, completed_at="2026-06-06T00:30:00")]
+        kept = prune_old_completed(tasks, today, 9 * 60, 1 * 60)
+        self.assertEqual(kept, [])
+
+    def test_overnight_today_completion_kept_by_planner_day(self):
+        # 6/6 プランナー日の深夜（暦 6/7 00:30）に完了したタスクは today=6/6 では残す
+        today = datetime.date(2026, 6, 6)
+        tasks = [_t("当日深夜完了", "2026-06-06T22:00:00", 30,
+                    completed=True, completed_at="2026-06-07T00:30:00")]
+        kept = prune_old_completed(tasks, today, 9 * 60, 1 * 60)
+        self.assertEqual([t.title for t in kept], ["当日深夜完了"])
+
 
 if __name__ == "__main__":
     unittest.main()
