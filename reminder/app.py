@@ -614,7 +614,7 @@ class PlannerApp:
     def _roll_over(self, today: datetime.date) -> bool:
         """プランナー日 today を基準に完了整理・繰り越しを行う。変化があれば True。"""
         before = len(self.tasks)  # 整理前のタスク数を記録して変化を検知するために保存する
-        self.tasks = prune_old_completed(self.tasks, today)  # 古い完了済みタスクをリストから除去する
+        self.tasks = prune_old_completed(self.tasks, today, self._wake_min(), self._sleep_min())  # 古い完了済みタスクを planner_day 基準でリストから除去する
         moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min())  # 期限切れタスクを今日の起床後に繰り越し、移動件数を取得する
         return moved > 0 or len(self.tasks) != before  # 繰り越しまたはタスク数に変化があれば True を返す
 

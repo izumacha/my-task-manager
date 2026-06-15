@@ -284,11 +284,21 @@ def carry_over_overdue(
     return moved  # 繰り越したタスク数を返す
 
 
-def prune_old_completed(tasks: list[Task], today: datetime.date) -> list[Task]:
+def prune_old_completed(
+    tasks: list[Task],
+    today: datetime.date,
+    wake_min: int = DEFAULT_WAKE_MIN,
+    sleep_min: int = DEFAULT_SLEEP_MIN,
+) -> list[Task]:
     """前日以前に完了したタスクを取り除いた新しいリストを返す。
 
     今日完了したタスクはタイムライン上に「済」として残す。完了日時が
     不明・不正なものは安全側で残す。
+
+    「いつのタスクか」は暦日ではなく planner_day（起床〜就寝で区切る一日）で
+    判定する。stats / carry_over_overdue と同じ区切りに揃えることで、夜更かし
+    レンジ（例: 就寝 01:00）で 00:30 に完了したタスクが、統計上は前日扱いなのに
+    タイムラインには今日として残り続ける食い違いを防ぐ。
     """
     kept: list[Task] = []  # 残すタスクを蓄積するリストを初期化する
     for task in tasks:  # 全タスクに対してループする
@@ -298,7 +308,7 @@ def prune_old_completed(tasks: list[Task], today: datetime.date) -> list[Task]:
             except (TypeError, ValueError):  # 変換に失敗した場合（不正な形式）
                 kept.append(task)  # 安全側で残す（破棄しない）
                 continue  # 次のタスクへ進む
-            if done.date() < today:  # 完了日が今日より前の場合
-                continue  # 過去日に完了済み → 破棄（kept に追加しない）
+            if planner_day(done, wake_min, sleep_min) < today:  # 完了の planner_day が今日より前の場合
+                continue  # 過去のプランナー日に完了済み → 破棄（kept に追加しない）
         kept.append(task)  # 上記以外はリストに残す
     return kept  # 古い完了タスクを除いた新しいリストを返す
