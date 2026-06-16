@@ -55,9 +55,13 @@ def _send_linux_notification(body: str = "") -> None:
     Args:
         body: 通知本文（タスク名など）。空の場合はタイトルのみ表示する。
     """
-    args = ["notify-send", "--urgency=normal", "プランナー"]  # notify-send コマンドの基本引数リストを組み立てる
+    # "--" を入れてオプション解析を打ち切る。notify-send（GLib の GOptionContext）は
+    # 最初の位置引数で解析を止めず行全体からオプションを拾うため、"--" が無いと
+    # ユーザー入力のタスク名（body）が "-t" 等のフラグとして誤解釈される恐れがある。
+    # "--" 以降を厳密に位置引数（タイトル・本文）として渡し、引数注入を防ぐ。
+    args = ["notify-send", "--urgency=normal", "--", "プランナー"]  # "--" でオプション解析を終端した notify-send の基本引数リスト
     if body:  # 本文テキストが指定されている場合
-        args.append(body)  # 引数リストに本文を追加する
+        args.append(body)  # 引数リストに本文を追加する（"--" 以降なのでフラグ誤認されない）
     try:
         subprocess.Popen(
             args,
