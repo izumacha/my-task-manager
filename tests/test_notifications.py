@@ -39,7 +39,7 @@ class PlayNotificationSoundTests(unittest.TestCase):
         root = Mock()
         play_notification_sound(root, "会議の準備")
         mock_popen.assert_called_once_with(
-            ["notify-send", "--urgency=normal", "プランナー", "会議の準備"],
+            ["notify-send", "--urgency=normal", "--", "プランナー", "会議の準備"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -75,7 +75,7 @@ class SendLinuxNotificationTests(unittest.TestCase):
     def test_invokes_notify_send_without_body(self, mock_popen):
         _send_linux_notification()
         mock_popen.assert_called_once_with(
-            ["notify-send", "--urgency=normal", "プランナー"],
+            ["notify-send", "--urgency=normal", "--", "プランナー"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -84,10 +84,20 @@ class SendLinuxNotificationTests(unittest.TestCase):
     def test_invokes_notify_send_with_body(self, mock_popen):
         _send_linux_notification("掃除")
         mock_popen.assert_called_once_with(
-            ["notify-send", "--urgency=normal", "プランナー", "掃除"],
+            ["notify-send", "--urgency=normal", "--", "プランナー", "掃除"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+    @patch("reminder.notifications.subprocess.Popen")
+    def test_flag_like_body_is_passed_after_double_dash(self, mock_popen):
+        # ユーザーが "-t" のようなフラグ風のタスク名を付けても、"--" 以降の
+        # 位置引数として渡され、notify-send のオプションに誤解釈されないことを保証する。
+        _send_linux_notification("-t 1 --expire-time=0")
+        args = mock_popen.call_args.args[0]
+        # "--" が本文より前に存在し、フラグ風の本文が "--" の後ろに来ることを検証する
+        self.assertIn("--", args)
+        self.assertLess(args.index("--"), args.index("-t 1 --expire-time=0"))
 
     @patch("reminder.notifications.subprocess.Popen", side_effect=FileNotFoundError)
     def test_swallows_missing_command(self, _mock_popen):
