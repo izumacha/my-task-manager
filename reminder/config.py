@@ -42,8 +42,8 @@ def load_prefs() -> Prefs:
             data = json.load(f)  # JSON として読み込んで辞書に変換する
     except FileNotFoundError:  # ファイルが存在しない場合
         return Prefs()  # デフォルト設定を返す
-    except Exception:  # その他のエラー（壊れたJSONなど）が発生した場合
-        logging.warning("設定ファイルの読み込みに失敗しました: %s", _SETTINGS_PATH)  # 警告ログを出力する
+    except Exception as e:  # その他のエラー（壊れたJSONなど）が発生した場合
+        logging.warning("設定ファイルの読み込みに失敗しました (%s): %s", _SETTINGS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
         return Prefs()  # デフォルト設定を返す
 
     if not isinstance(data, dict):  # 読み込んだデータが辞書でない場合（不正な形式）
@@ -75,8 +75,8 @@ def load_tasks() -> list[Task]:
             data = json.load(f)  # JSON として読み込んでリストに変換する
     except FileNotFoundError:  # ファイルが存在しない場合（初回起動など）
         return []  # タスクが存在しないとして空リストを返す
-    except Exception:  # その他のエラー（壊れたJSONなど）が発生した場合
-        logging.warning("タスクファイルの読み込みに失敗しました: %s", _TASKS_PATH)  # 警告ログを出力する
+    except Exception as e:  # その他のエラー（壊れたJSONなど）が発生した場合
+        logging.warning("タスクファイルの読み込みに失敗しました (%s): %s", _TASKS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
         return []  # 読み込み失敗なので空リストを返す
 
     if not isinstance(data, list):  # 読み込んだデータがリストでない場合（不正な形式）
