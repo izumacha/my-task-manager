@@ -191,5 +191,48 @@ class TaskPersistenceTests(unittest.TestCase):
             self.assertTrue(os.path.exists(tasks_path))
 
 
+class AtomicWriteDurabilityTests(unittest.TestCase):
+    """原子的書き込みが「途中失敗で既存ファイルを壊さない」ことを保証するテスト。"""
+
+    def test_failed_task_save_preserves_existing_file(self):
+        # 書き込み途中で例外が起きても、既存の tasks.json が壊れない（全消失しない）こと
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):
+                # まず正常なタスクを保存しておく（これが守られるべき既存データ）
+                save_tasks([Task(title="既存", due="2026-06-06T09:00:00")])
+                # 次の保存中に json.dump が失敗する状況を再現する
+                with patch("reminder.config.json.dump", side_effect=RuntimeError("disk full")):
+                    save_tasks([Task(title="新規", due="2026-06-07T09:00:00")])
+                # 失敗後も既存ファイルは元の内容のまま読み込めること
+                loaded = load_tasks()
+            self.assertEqual([t.title for t in loaded], ["既存"])
+
+    def test_failed_save_leaves_no_temp_files(self):
+        # 書き込み失敗時に一時ファイル（.tmp-*.json）が残らず後始末されること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):
+                with patch("reminder.config.json.dump", side_effect=RuntimeError("disk full")):
+                    save_tasks([Task(title="新規", due="2026-06-07T09:00:00")])
+                leftovers = [n for n in os.listdir(tmpdir) if n.startswith(".tmp-")]
+            self.assertEqual(leftovers, [])
+
+    def test_failed_prefs_save_preserves_existing_file(self):
+        # 設定ファイルも同様に、途中失敗で既存設定を壊さないこと
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):
+                save_prefs(Prefs(wake="06:30", sleep="22:00"))
+                with patch("reminder.config.json.dump", side_effect=RuntimeError("disk full")):
+                    save_prefs(Prefs(wake="05:00", sleep="21:00"))
+                loaded = load_prefs()
+            self.assertEqual(loaded.wake, "06:30")
+            self.assertEqual(loaded.sleep, "22:00")
+
+
 if __name__ == "__main__":
     unittest.main()

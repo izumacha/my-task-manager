@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 
@@ -18,6 +19,38 @@ from .timeline import DEFAULT_SLEEP_MIN, DEFAULT_WAKE_MIN, min_to_hhmm
 _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "reminder")  # 設定ファイルを置くディレクトリのパスを組み立てる
 _TASKS_PATH = os.path.join(_CONFIG_DIR, "tasks.json")  # タスク一覧を保存するJSONファイルのフルパスを定義する
 _SETTINGS_PATH = os.path.join(_CONFIG_DIR, "settings.json")  # アプリ設定を保存するJSONファイルのフルパスを定義する
+
+
+def _atomic_write_json(path: str, payload: object) -> None:
+    """payload を JSON として path へ原子的（アトミック）に書き出す。
+
+    まず同じディレクトリ内の一時ファイルへ全内容を書き、最後に os.replace で
+    本番ファイルへ「一気に」差し替える。こうすると、書き込み途中でクラッシュ・
+    電源断・例外が起きても本番ファイルは壊れない。本番パスを直接 "w" で開くと
+    開いた瞬間に中身が空に切り詰められ、途中で失敗するとユーザーの全タスク／
+    設定を丸ごと失う恐れがあるため、その事故を防ぐのが狙い（§9 fail-safe）。
+
+    一時ファイルを同一ディレクトリに作るのは、os.replace が同じファイルシステム
+    上でのみ原子的に働くため。os.replace は POSIX / Windows どちらでも原子的に
+    置き換わる（§10 移植性）。失敗時は一時ファイルを後始末し、例外を呼び出し元へ
+    再送出して save_* 側でログに残せるようにする。
+    """
+    directory = os.path.dirname(path) or "."  # 一時ファイルを本番ファイルと同じディレクトリに作るため親ディレクトリを取り出す（空なら現在地）
+    os.makedirs(directory, exist_ok=True)  # 保存先ディレクトリが存在しない場合は作成する
+    # delete=False ではなく mkstemp を使い、書き込み後に os.replace で本番へ差し替える
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".json")  # 同一ディレクトリ上に一時ファイルを作成しFDを得る
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:  # 低レベルFDをUTF-8テキストファイルとして開く（with終了時にcloseされる）
+            json.dump(payload, f, ensure_ascii=False, indent=2)  # ペイロードをインデント付きJSONとして一時ファイルへ書き出す
+            f.flush()  # PythonのバッファをOSへ確実に渡す
+            os.fsync(f.fileno())  # OSバッファをディスクへ同期し、置き換え後に中身が空になる事故を防ぐ
+        os.replace(tmp_path, path)  # 一時ファイルを本番ファイルへ原子的に差し替える（成功時は一時ファイルは消える）
+    except Exception:  # 書き込みまたは置き換えに失敗した場合
+        try:
+            os.unlink(tmp_path)  # 書きかけの一時ファイルを削除して後始末する（本番ファイルは無傷のまま）
+        except OSError:  # 一時ファイルが既に無い等で削除に失敗しても
+            pass  # 後始末の失敗は致命的ではないため無視する
+        raise  # 元の例外を呼び出し元へ再送出し、save_* 側で警告ログに残せるようにする
 
 
 @dataclass
@@ -59,13 +92,11 @@ def load_prefs() -> Prefs:
 
 
 def save_prefs(prefs: Prefs) -> None:
-    """設定を JSON ファイルに書き出す。"""
+    """設定を JSON ファイルに原子的に書き出す（途中失敗で既存設定を壊さない）。"""
     try:
-        os.makedirs(_CONFIG_DIR, exist_ok=True)  # 設定ディレクトリが存在しない場合は作成する
-        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:  # 設定ファイルを書き込みモードで開く
-            json.dump(asdict(prefs), f, ensure_ascii=False, indent=2)  # Prefs を辞書に変換してインデント付きJSONとして書き出す
+        _atomic_write_json(_SETTINGS_PATH, asdict(prefs))  # 一時ファイル経由で安全に設定を書き出す
     except Exception as e:  # ファイル書き込みで何らかのエラーが発生した場合
-        logging.warning("設定ファイルの保存に失敗しました: %s", e)  # 警告ログにエラー内容を記録する
+        logging.warning("設定ファイルの保存に失敗しました (%s): %s", _SETTINGS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
 
 
 def load_tasks() -> list[Task]:
@@ -105,10 +136,8 @@ def load_tasks() -> list[Task]:
 
 
 def save_tasks(tasks: list[Task]) -> None:
-    """タスク一覧を JSON ファイルに書き出す。"""
+    """タスク一覧を JSON ファイルに原子的に書き出す（途中失敗で既存タスクを壊さない）。"""
     try:
-        os.makedirs(_CONFIG_DIR, exist_ok=True)  # 設定ディレクトリが存在しない場合は作成する
-        with open(_TASKS_PATH, "w", encoding="utf-8") as f:  # タスクファイルを書き込みモードで開く
-            json.dump([t.to_dict() for t in tasks], f, ensure_ascii=False, indent=2)  # 全タスクを辞書リストに変換してインデント付きJSONとして書き出す
+        _atomic_write_json(_TASKS_PATH, [t.to_dict() for t in tasks])  # 一時ファイル経由で安全にタスク一覧を書き出す
     except Exception as e:  # ファイル書き込みで何らかのエラーが発生した場合
-        logging.warning("タスクファイルの保存に失敗しました: %s", e)  # 警告ログにエラー内容を記録する
+        logging.warning("タスクファイルの保存に失敗しました (%s): %s", _TASKS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
