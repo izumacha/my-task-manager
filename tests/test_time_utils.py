@@ -94,5 +94,35 @@ class DelayMsUntilBoundaryTests(unittest.TestCase):
         self.assertEqual(result, 1)  # 1ms 後なので 1 が返ることを確認する
 
 
+class DelayMsUntilExactClampThresholdTests(unittest.TestCase):
+    """クランプ境界を「ちょうど」で固定する: 上限の前後 1ms と端数の丸め方向を検証する。
+
+    既存の「約 1 年後 → MAX_AFTER_MS」テストはクランプの発生は捕まえるが、
+    しきい値が厳密に MAX_AFTER_MS であることまでは固定しない（min(delta, MAX_AFTER_MS-1)
+    のような off-by-one を見逃す）。ここで上限ちょうど・上限直前を直接ピンする。
+    """
+
+    def test_just_below_limit_is_not_clamped(self) -> None:
+        """上限ちょうど 1ms 手前の遅延はクランプされず、その値のまま返ること。"""
+        now = datetime.datetime(2026, 6, 12, 10, 0, 0)  # 現在日時を固定値で用意する
+        target = now + datetime.timedelta(milliseconds=MAX_AFTER_MS - 1)  # 上限の 1ms 手前を目標日時とする
+        result = delay_ms_until(now, target)  # 待機ミリ秒数を計算する
+        self.assertEqual(result, MAX_AFTER_MS - 1)  # 上限未満なのでクランプされず元の値が返ることを確認する
+
+    def test_exactly_at_limit_returns_limit(self) -> None:
+        """遅延が上限ちょうどのときは MAX_AFTER_MS をそのまま返すこと。"""
+        now = datetime.datetime(2026, 6, 12, 10, 0, 0)  # 現在日時を固定値で用意する
+        target = now + datetime.timedelta(milliseconds=MAX_AFTER_MS)  # 上限ちょうどになる目標日時とする
+        result = delay_ms_until(now, target)  # 待機ミリ秒数を計算する
+        self.assertEqual(result, MAX_AFTER_MS)  # 上限ちょうどなので MAX_AFTER_MS が返ることを確認する
+
+    def test_sub_millisecond_is_truncated_down(self) -> None:
+        """1ms 未満の端数は int() で切り捨て（切り上げでない）られること。"""
+        now = datetime.datetime(2026, 6, 12, 10, 0, 0)  # 現在日時を固定値で用意する
+        target = now + datetime.timedelta(microseconds=1500)  # 1.5 ミリ秒後を目標日時とする
+        result = delay_ms_until(now, target)  # 待機ミリ秒数を計算する
+        self.assertEqual(result, 1)  # 1.5 → 1 に切り捨てられる（2 に切り上げない）ことを確認する
+
+
 if __name__ == "__main__":
     unittest.main()  # このファイルを直接実行したときにテストを走らせる
