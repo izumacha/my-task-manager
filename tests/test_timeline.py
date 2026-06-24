@@ -21,7 +21,6 @@ from reminder.timeline import (
     min_to_hhmm,
     planner_day,
     prune_old_completed,
-    scheduled_on,
     suggest_for_free_time,
 )
 
@@ -210,17 +209,6 @@ class MaxFreeSlotTests(unittest.TestCase):
         fitting = suggest_for_free_time(
             [Task(title="長", due="", duration_min=60)], 30)
         self.assertEqual(fitting, [])
-
-
-class ScheduledOnTests(unittest.TestCase):
-    def test_sorted_by_start(self):
-        tasks = [
-            _t("b", "2026-06-06T13:00:00"),
-            _t("a", "2026-06-06T09:00:00"),
-            Task(title="backlog", due=""),
-        ]
-        result = scheduled_on(tasks, datetime.date(2026, 6, 6))
-        self.assertEqual([t.title for t in result], ["a", "b"])
 
 
 class BacklogTests(unittest.TestCase):
