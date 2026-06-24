@@ -108,24 +108,6 @@ def _task_status(task: Task, now: datetime.datetime) -> str:
     return STATUS_UPCOMING  # どれにも該当しない場合は「これから」ステータスを返す
 
 
-def scheduled_on(tasks: list[Task], date: datetime.date) -> list[Task]:
-    """指定日に開始するスケジュール済みタスクを開始順で返す。"""
-    todays = [t for t in tasks if t.is_scheduled and t.due_dt.date() == date]  # 指定日にスケジュールされているタスクだけ抽出する
-    return sorted(todays, key=lambda t: t.due_dt)  # 開始日時の昇順に並べて返す
-
-
-def scheduled_in_window(
-    tasks: list[Task], start: datetime.datetime, end: datetime.datetime
-) -> list[Task]:
-    """[start, end) の窓に開始するスケジュール済みタスクを開始順で返す。
-
-    就寝が翌日にまわる夜間レンジ（例: 起床 09:00 / 就寝 01:00）でも、窓内に
-    開始するタスク（例: 翌 00:30）を取りこぼさない。
-    """
-    inside = [t for t in tasks if t.is_scheduled and start <= t.due_dt < end]  # start 以上 end 未満に開始するスケジュール済みタスクを抽出する
-    return sorted(inside, key=lambda t: t.due_dt)  # 開始日時の昇順に並べて返す
-
-
 def build_day_timeline(
     tasks: list[Task],
     date: datetime.date,
