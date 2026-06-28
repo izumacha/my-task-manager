@@ -7,6 +7,7 @@ import datetime
 import unittest
 from unittest.mock import Mock, patch
 
+from reminder import theme
 from reminder.app import PlannerApp, ReminderApp
 from reminder.config import Prefs
 from reminder.recurrence import RECUR_DAILY, RECUR_LABELS, RECUR_NONE
@@ -377,6 +378,22 @@ class CalendarRenderTests(AppTestCase):
         _x0, y0, _x1, y1, _cb, _tid, _done = blocks[0]
         self.assertGreaterEqual(y0, 0)   # 負の y に描かれない（見切れない）
         self.assertGreater(y1, y0)
+
+    def test_many_overlapping_tasks_stay_visible(self):
+        # 多数のタスクが同時刻に重なり、かつ Canvas 幅が狭いとき（最悪条件）でも
+        # 各ブロックは「正の幅」を持つ（反転・消失しない）ことを保証する。
+        # タイムライン Canvas は横スクロールを持たず、重なりレーンは可視幅を分割して
+        # 並べるため、レーンが多いと 1 レーン幅が狭まり、左右の固定隙間で
+        # ブロック幅が負になってタスクが見えず・押せなくなる回帰を防ぐ。
+        today = datetime.date.today()
+        base = datetime.datetime.combine(today, datetime.time(10, 0))  # 同一開始時刻に重ねる基準時刻
+        tasks = [Task(title=f"会議{i}", due=_iso(base), duration_min=60) for i in range(12)]  # 12 件すべて重なるタスク
+        app, _ = self._app(tasks)
+        app._tl_width = theme.CAL_GUTTER + 80  # 描画幅を最小幅に固定して最悪条件を再現する
+        app._render_timeline(today)
+        self.assertEqual(len(app._tl_blocks), len(tasks))  # 全タスクが描画される（欠落しない）
+        for x0, _y0, x1, _y1, _cb, _tid, _done in app._tl_blocks:  # 各ブロックの矩形を検査する
+            self.assertGreater(x1, x0)  # ブロック幅は常に正（反転・ゼロ幅で消えない）
 
     def test_grid_labels_respect_minute_offset(self):
         # 起床が 07:30（非正時）でも罫線ラベルは実際の正時（08:00〜）になる

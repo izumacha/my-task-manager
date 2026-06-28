@@ -714,8 +714,11 @@ class PlannerApp:
         task = row.task  # このブロックに対応するタスクオブジェクトを取得する
         y0 = y_of(row.start)  # タスク開始時刻の y 座標を計算する
         y1 = max(y_of(row.end), y0 + 24)  # 最低限の高さを確保
-        x0 = area_left + lane * lane_w + theme.CAL_BLOCK_GAP  # ブロック左端の x 座標を計算する（レーン位置と余白から）
-        x1 = area_left + (lane + 1) * lane_w - theme.CAL_BLOCK_GAP  # ブロック右端の x 座標を計算する
+        # レーンが狭いと固定隙間 CAL_BLOCK_GAP では幅が負になり消えるため、
+        # 隙間はレーン幅の一定割合までに抑えてブロック幅を必ず正に保つ。
+        gap = min(theme.CAL_BLOCK_GAP, lane_w * theme.CAL_BLOCK_GAP_MAX_RATIO)  # レーン幅に応じて詰めた左右の隙間（px）
+        x0 = area_left + lane * lane_w + gap  # ブロック左端の x 座標を計算する（レーン位置と隙間から）
+        x1 = area_left + (lane + 1) * lane_w - gap  # ブロック右端の x 座標を計算する
 
         fill, accent, text_color = self._block_colors(task, row.status)  # タスクの状態（完了・進行中・過去など）に応じた配色を取得する
         is_selected = task.id == self._tl_selected  # このタスクが現在選択中かどうかを判定する
