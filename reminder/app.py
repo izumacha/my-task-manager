@@ -807,8 +807,8 @@ class PlannerApp:
             try:
                 now = self._get_now()  # リサイズ時点の現在時刻を 1 回だけ取得する（日付と now ラインのズレを防ぐ）
                 self._render_timeline(self._planner_today(now), now)  # カレンダーを新しい幅で再描画する
-            except Exception:
-                logging.debug("リサイズ時のカレンダー再描画に失敗しました。")  # 例外を握りつぶしてデバッグログだけ残す
+            except Exception as e:  # リサイズ中の例外を捕捉してクラッシュを防ぐ
+                logging.debug("リサイズ時のカレンダー再描画に失敗しました: %s", e)  # 例外を握りつぶさずデバッグログに原因を残す
 
     def _on_timeline_click(self, event) -> None:
         """カレンダーのクリックを処理する。
@@ -882,8 +882,8 @@ class PlannerApp:
         for task in self.tasks:  # 全タスクをループする
             try:
                 self._schedule_task(task)  # 各タスクの通知ジョブを登録する
-            except Exception:
-                logging.warning("タスクの通知スケジュールに失敗しました: %s", task.id)  # 失敗してもクラッシュさせず警告ログに記録して続行する
+            except Exception as e:  # スケジュール登録の例外を捕捉して残りのタスクの処理を続ける
+                logging.warning("タスクの通知スケジュールに失敗しました: %s: %s", task.id, e)  # 失敗してもクラッシュさせず警告ログにタスクIDと原因を記録する
 
     def _schedule_task(self, task: Task) -> None:
         """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。"""
@@ -920,8 +920,8 @@ class PlannerApp:
         if job_id is not None:  # キャンセル対象のジョブが存在するなら
             try:
                 self.root.after_cancel(job_id)  # tkinter のタイマーコールバックをキャンセルする
-            except Exception:
-                logging.debug("ジョブのキャンセルに失敗しました: %s", task_id)  # キャンセル失敗をデバッグログに記録して無視する
+            except Exception as e:  # after_cancel が失敗した場合（既に発火済みなど）を捕捉する
+                logging.debug("ジョブのキャンセルに失敗しました: %s: %s", task_id, e)  # キャンセル失敗をデバッグログにタスクIDと原因を記録して無視する
 
     def _persist_tasks(self) -> None:
         """現在のタスク一覧をディスクに保存する。"""

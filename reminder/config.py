@@ -120,9 +120,8 @@ def load_tasks() -> list[Task]:
             continue  # そのエントリをスキップして次へ進む
         try:
             task = Task.from_dict(entry)  # 辞書からTaskオブジェクトを生成する
-        except Exception:
-            # 1 件壊れていても残りは読み込めるよう、個別にスキップする
-            logging.debug("壊れたタスクエントリをスキップしました: %r", entry)  # デバッグログにスキップしたエントリを記録する
+        except Exception as e:  # 1 件壊れていても残りは読み込めるよう、個別にスキップする
+            logging.debug("壊れたタスクエントリをスキップしました: %r: %s", entry, e)  # デバッグログにスキップしたエントリと原因例外を記録する
             continue  # このエントリをスキップして次のエントリへ進む
         # Treeview の iid には task.id を使うため「空でない一意な文字列」でなければならない。
         # 手編集や不正なマージで id が空文字・非文字列（例: 123）・重複になっていると、
