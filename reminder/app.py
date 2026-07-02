@@ -41,6 +41,7 @@ from .task import (
     MAX_DURATION,
     MIN_DURATION,
     Task,
+    _coerce_duration,
     build_next_task,
     make_due,
 )
@@ -426,7 +427,9 @@ class PlannerApp:
 
     def _input_duration(self) -> int:
         """入力欄の所要時間（分）を正規化して返す。"""
-        d = self._coerce_int(self.dur_var.get(), MIN_DURATION, MAX_DURATION)  # 入力欄の所要時間を取得して有効範囲にクランプする
+        # Task.__post_init__ と同じ _coerce_duration を使い、非数値は DEFAULT_DURATION に
+        # フォールバックする（task.py が唯一の参照元。CLAUDE.md §6 の定数一元管理）。
+        d = _coerce_duration(self.dur_var.get())  # 入力欄の所要時間を取得して正規化する
         self.dur_var.set(str(d))  # クランプ後の値を入力欄に書き戻す
         return d  # 正規化した所要時間（分）を返す
 
@@ -504,10 +507,12 @@ class PlannerApp:
         return self._find(self._tl_selected)
 
     def complete_timeline_selected(self) -> None:
+        """カレンダー（タイムライン）で選択中のタスクを完了にする。"""
         task = self._timeline_selected()  # カレンダーで選択中のタスクを取得する
         self._complete(task)  # タスクを完了処理に渡す
 
     def complete_backlog_selected(self) -> None:
+        """あとでやるリストで選択中のタスクを完了にする。"""
         task = self._selected(self.backlog_tree)  # バックログリストで選択中のタスクを取得する
         self._complete(task)  # タスクを完了処理に渡す
 
@@ -546,9 +551,11 @@ class PlannerApp:
             logging.info("タスクを完了: %s", task.title)  # 完了したタスク名をログに記録する
 
     def delete_timeline_selected(self) -> None:
+        """カレンダー（タイムライン）で選択中のタスクを削除する。"""
         self._delete(self._timeline_selected())  # カレンダーで選択中のタスクを削除処理に渡す
 
     def delete_backlog_selected(self) -> None:
+        """あとでやるリストで選択中のタスクを削除する。"""
         self._delete(self._selected(self.backlog_tree))  # バックログリストで選択中のタスクを削除処理に渡す
 
     def _delete(self, task: Task | None) -> None:

@@ -11,7 +11,7 @@ from reminder import theme
 from reminder.app import PlannerApp, ReminderApp
 from reminder.config import Prefs
 from reminder.recurrence import RECUR_DAILY, RECUR_LABELS, RECUR_NONE
-from reminder.task import ISO_FMT, Task
+from reminder.task import DEFAULT_DURATION, ISO_FMT, Task
 
 
 class _DummyVar:
@@ -91,6 +91,13 @@ class InputNormalizeTests(AppTestCase):
         app, _ = self._app()
         app.dur_var.set("100000")
         self.assertEqual(app._input_duration(), 24 * 60)
+
+    def test_duration_non_numeric_defaults(self):
+        # 非数値の所要時間は task.py の _coerce_duration と同じ DEFAULT_DURATION に
+        # フォールバックする（UI 入力と tasks.json 復元でフォールバック値を統一）。
+        app, _ = self._app()
+        app.dur_var.set("ab")
+        self.assertEqual(app._input_duration(), DEFAULT_DURATION)
 
     def test_recurrence_parsed(self):
         app, _ = self._app()
