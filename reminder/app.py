@@ -507,10 +507,12 @@ class PlannerApp:
         return self._find(self._tl_selected)
 
     def complete_timeline_selected(self) -> None:
+        """カレンダー（タイムライン）で選択中のタスクを完了にする。"""
         task = self._timeline_selected()  # カレンダーで選択中のタスクを取得する
         self._complete(task)  # タスクを完了処理に渡す
 
     def complete_backlog_selected(self) -> None:
+        """あとでやるリストで選択中のタスクを完了にする。"""
         task = self._selected(self.backlog_tree)  # バックログリストで選択中のタスクを取得する
         self._complete(task)  # タスクを完了処理に渡す
 
@@ -549,9 +551,11 @@ class PlannerApp:
             logging.info("タスクを完了: %s", task.title)  # 完了したタスク名をログに記録する
 
     def delete_timeline_selected(self) -> None:
+        """カレンダー（タイムライン）で選択中のタスクを削除する。"""
         self._delete(self._timeline_selected())  # カレンダーで選択中のタスクを削除処理に渡す
 
     def delete_backlog_selected(self) -> None:
+        """あとでやるリストで選択中のタスクを削除する。"""
         self._delete(self._selected(self.backlog_tree))  # バックログリストで選択中のタスクを削除処理に渡す
 
     def _delete(self, task: Task | None) -> None:
