@@ -41,6 +41,7 @@ from .task import (
     MAX_DURATION,
     MIN_DURATION,
     Task,
+    _coerce_duration,
     build_next_task,
     make_due,
 )
@@ -426,7 +427,9 @@ class PlannerApp:
 
     def _input_duration(self) -> int:
         """入力欄の所要時間（分）を正規化して返す。"""
-        d = self._coerce_int(self.dur_var.get(), MIN_DURATION, MAX_DURATION)  # 入力欄の所要時間を取得して有効範囲にクランプする
+        # Task.__post_init__ と同じ _coerce_duration を使い、非数値は DEFAULT_DURATION に
+        # フォールバックする（task.py が唯一の参照元。CLAUDE.md §6 の定数一元管理）。
+        d = _coerce_duration(self.dur_var.get())  # 入力欄の所要時間を取得して正規化する
         self.dur_var.set(str(d))  # クランプ後の値を入力欄に書き戻す
         return d  # 正規化した所要時間（分）を返す
 
