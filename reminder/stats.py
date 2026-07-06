@@ -44,15 +44,18 @@ def current_streak(
     wake_min: int = DEFAULT_WAKE_MIN,
     sleep_min: int = DEFAULT_SLEEP_MIN,
 ) -> int:
-    """今日（プランナー日）を末尾とする連続達成日数を返す。
+    """今日（プランナー日）またはその前日を末尾とする連続達成日数を返す。
 
     今日から過去に向かって「1 件以上完了した日」が連続している日数を数える。
-    今日の完了が 0 件なら 0 を返す。
+    今日まだ 1 件も完了していなくても、昨日まで連続していれば「継続中」として数える
+    （連続は「まる 1 日を完了 0 件で過ごした」ときに初めて途切れるため）。
+    今日と昨日の両方が 0 件のときだけ 0 を返す。
     """
     done_days = set(_to_days(history, wake_min, sleep_min))  # 完了があった日の集合（重複なし）を作る
+    # 起点日を決める: 今日に完了があれば今日から、なければ昨日から遡る（今日はまだ進行中とみなす）
+    day = today if today in done_days else today - datetime.timedelta(days=1)
     streak = 0  # 連続達成日数のカウンタを 0 で初期化する
-    day = today  # 今日から過去に向かって検索するための変数に今日の日付を代入する
-    while day in done_days:  # 当日に 1 件以上完了があれば連続日として数える
+    while day in done_days:  # その日に 1 件以上完了があれば連続日として数える
         streak += 1  # 連続達成日数を 1 増やす
         day -= datetime.timedelta(days=1)  # 1 日前に移動して連続を確認し続ける
     return streak  # 連続達成日数を返す
