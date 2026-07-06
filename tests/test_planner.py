@@ -402,6 +402,26 @@ class CalendarRenderTests(AppTestCase):
         for x0, _y0, x1, _y1, _cb, _tid, _done in app._tl_blocks:  # 各ブロックの矩形を検査する
             self.assertGreater(x1, x0)  # ブロック幅は常に正（反転・ゼロ幅で消えない）
 
+    def test_short_consecutive_tasks_do_not_visually_overlap(self):
+        # 所要時間が短いタスク（描画時に theme.CAL_MIN_BLOCK_HEIGHT へクランプされる）が
+        # 隙間なく連続すると、実終了時刻を超えて描かれたクランプ分が次のタスクの
+        # 開始位置に食い込み、カードが重なって隠れてしまう回帰を防ぐ。
+        # レーン割り当て（_assign_lanes）が見た目の高さを考慮していれば、
+        # 同じ x 範囲・重なる y 範囲のカードにはならない。
+        today = datetime.date.today()
+        start1 = datetime.datetime.combine(today, datetime.time(9, 0))
+        start2 = datetime.datetime.combine(today, datetime.time(9, 5))  # 前のタスクの実終了直後に開始（隙間ゼロ）
+        t1 = Task(title="短いA", due=_iso(start1), duration_min=5)  # 実際の高さはクランプされるほど短い所要時間
+        t2 = Task(title="短いB", due=_iso(start2), duration_min=5)
+        app, _ = self._app([t1, t2])
+        app._render_timeline(today)
+        blocks = {b[5]: b for b in app._tl_blocks}  # task.id をキーにブロック矩形を引けるようにする
+        x0_a, y0_a, x1_a, y1_a, _cb_a, _id_a, _done_a = blocks[t1.id]
+        x0_b, y0_b, x1_b, y1_b, _cb_b, _id_b, _done_b = blocks[t2.id]
+        x_overlap = x0_a < x1_b and x0_b < x1_a  # 2 つのカードの x 範囲が重なっているか判定する
+        y_overlap = y0_a < y1_b and y0_b < y1_a  # 2 つのカードの y 範囲が重なっているか判定する
+        self.assertFalse(x_overlap and y_overlap)  # x も y も重なる（＝カード同士が重なって見える）状態にはならない
+
     def test_grid_labels_respect_minute_offset(self):
         # 起床が 07:30（非正時）でも罫線ラベルは実際の正時（08:00〜）になる
         today = datetime.date.today()

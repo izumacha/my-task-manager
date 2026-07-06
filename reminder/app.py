@@ -659,7 +659,13 @@ class PlannerApp:
         width = max(self._tl_width, theme.CAL_GUTTER + 80)  # 描画幅を Canvas の現在幅と最小幅の大きい方にする
         self._draw_time_grid(cv, window_start, window_end, width, y_of)  # 正時の罫線と時刻ラベルを描く
 
-        lanes = self._assign_lanes(task_rows)  # 重なるタスクをレーン（横列）に割り当てる
+        # 描画時に最低高さ（theme.CAL_MIN_BLOCK_HEIGHT px）へクランプされる極端に
+        # 短いタスクは、実際の終了時刻より見た目上は長く描かれる。レーン割り当てが
+        # 実時間（row.end）だけで重なりを判定すると、クランプ分だけ隣のタスクと
+        # 視覚的に重なってしまうため、最低高さを分に換算した「見た目の占有時間」を
+        # 加味してレーンを分ける。
+        min_visual_minutes = theme.CAL_MIN_BLOCK_HEIGHT / scale  # 最低高さ（px）を「分」に換算する
+        lanes = self._assign_lanes(task_rows, min_visual_minutes)  # 重なるタスクをレーン（横列）に割り当てる
         lane_count = (max(lanes.values()) + 1) if lanes else 1  # 必要なレーン数を計算する（最大レーン番号 +1）
         area_left = theme.CAL_GUTTER  # タスクブロックを置くエリアの左端位置（時刻ラベル分の余白）を設定する
         area_w = width - area_left - theme.CAL_BLOCK_GAP  # タスクブロックを置けるエリアの横幅を計算する
@@ -697,18 +703,29 @@ class PlannerApp:
             t += datetime.timedelta(hours=1)  # 次の正時に進む
 
     @staticmethod
-    def _assign_lanes(task_rows) -> dict[str, int]:
-        """重なり合うタスクを横レーンに割り当てる（task.id → レーン番号）。"""
+    def _assign_lanes(task_rows, min_visual_minutes: float = 0.0) -> dict[str, int]:
+        """重なり合うタスクを横レーンに割り当てる（task.id → レーン番号）。
+
+        Args:
+            task_rows: レーンを割り当てるタスク行。
+            min_visual_minutes: 描画上の最低高さ（theme.CAL_MIN_BLOCK_HEIGHT）を
+                「分」に換算した値。実所要時間がこれより短いタスクは見た目上
+                この長さぶん描画されるため、レーンの重なり判定にも同じ長さを
+                加味し、隣接する短時間タスク同士が同じレーンで視覚的に
+                重ならないようにする。
+        """
         lanes: dict[str, int] = {}  # タスク ID → レーン番号の対応辞書を初期化する
-        active: list[tuple] = []  # (end_datetime, lane) 現在進行中のタスクリストを初期化する
+        min_gap = datetime.timedelta(minutes=min_visual_minutes)  # 最低高さを timedelta に変換する
+        active: list[tuple] = []  # (見た目の終了 datetime, lane) 現在進行中のタスクリストを初期化する
         for row in sorted(task_rows, key=lambda r: r.start):  # タスクを開始時刻の早い順に処理する
-            used = {lane for end, lane in active if end > row.start}  # このタスクと重なっているレーン番号の集合を取得する
-            active = [(end, lane) for end, lane in active if end > row.start]  # 終了済みのタスクをアクティブリストから除去する
+            visual_end = max(row.end, row.start + min_gap)  # 実終了時刻と最低高さ換算の終了時刻の遅い方を「見た目の終了」とする
+            used = {lane for end, lane in active if end > row.start}  # このタスクと見た目上重なっているレーン番号の集合を取得する
+            active = [(end, lane) for end, lane in active if end > row.start]  # 見た目上終了済みのタスクをアクティブリストから除去する
             lane = 0  # 最小のレーン番号 0 から探す
             while lane in used:  # そのレーンが使用中なら
                 lane += 1  # 次のレーン番号を試す
             lanes[row.task.id] = lane  # このタスクのレーン番号を確定して記録する
-            active.append((row.end, lane))  # 終了時刻とレーン番号をアクティブリストに追加する
+            active.append((visual_end, lane))  # 見た目の終了時刻とレーン番号をアクティブリストに追加する
         return lanes  # タスク ID → レーン番号の辞書を返す
 
     def _draw_task_block(self, cv, row, y_of, lane: int, lane_w: float,
@@ -720,7 +737,7 @@ class PlannerApp:
         """
         task = row.task  # このブロックに対応するタスクオブジェクトを取得する
         y0 = y_of(row.start)  # タスク開始時刻の y 座標を計算する
-        y1 = max(y_of(row.end), y0 + 24)  # 最低限の高さを確保
+        y1 = max(y_of(row.end), y0 + theme.CAL_MIN_BLOCK_HEIGHT)  # 最低限の高さを確保（レーン割り当てもこの値を共有する）
         # レーンが狭いと固定隙間 CAL_BLOCK_GAP では幅が負になり消えるため、
         # 隙間はレーン幅の一定割合までに抑えてブロック幅を必ず正に保つ。
         gap = min(theme.CAL_BLOCK_GAP, lane_w * theme.CAL_BLOCK_GAP_MAX_RATIO)  # レーン幅に応じて詰めた左右の隙間（px）
