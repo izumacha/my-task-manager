@@ -183,9 +183,9 @@ class BuildNextTaskTests(unittest.TestCase):
     def test_recurring_backlog_stays_backlog(self):
         # 「あとでやる」(未スケジュール) の繰り返しタスクは、完了しても次回は
         # backlog のまま再生成され、タイムラインへ勝手に固定されない。
-        t = Task(title="部屋の片付け", due="", recur_unit=RECUR_WEEKLY, recur_interval=1)
+        t = Task(title="部屋の片付け", due="", recur_unit=RECUR_WEEKLY, recur_interval=1)  # 時刻未定・週次繰り返しの backlog タスクを用意する
         self.assertFalse(t.is_scheduled)  # 前提: 元タスクは backlog（あとでやる）
-        nxt = build_next_task(t, datetime.datetime(2026, 7, 7, 22, 37, 15))
+        nxt = build_next_task(t, datetime.datetime(2026, 7, 7, 22, 37, 15))  # 22:37:15 に完了したとして次回タスクを生成する
         self.assertIsNotNone(nxt)  # 繰り返し設定があるので次回タスクは生成される
         self.assertEqual(nxt.due, "")  # 次回も backlog（開始時刻なし）で再生成される
         self.assertFalse(nxt.is_scheduled)  # タイムラインへ固定されていないこと
@@ -197,8 +197,8 @@ class BuildNextTaskTests(unittest.TestCase):
 
     def test_recurring_scheduled_still_gets_due(self):
         # 回帰防止: スケジュール済みの繰り返しタスクは従来どおり次回開始時刻を持つ。
-        t = Task(title="朝会", due="2026-06-06T09:00:00", recur_unit=RECUR_WEEKLY, recur_interval=1)
-        nxt = build_next_task(t, datetime.datetime(2026, 6, 6, 9, 0))
+        t = Task(title="朝会", due="2026-06-06T09:00:00", recur_unit=RECUR_WEEKLY, recur_interval=1)  # 開始時刻を持つ週次繰り返しの scheduled タスクを用意する
+        nxt = build_next_task(t, datetime.datetime(2026, 6, 6, 9, 0))  # 09:00 に完了したとして次回タスクを生成する
         self.assertTrue(nxt.is_scheduled)  # スケジュール済みのまま次回も予定される
         self.assertEqual(nxt.due, "2026-06-13T09:00:00")  # 1 週間後の同時刻に設定される
 
