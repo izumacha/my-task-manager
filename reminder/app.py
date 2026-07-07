@@ -540,9 +540,13 @@ class PlannerApp:
             self.tasks.append(next_task)  # 次回タスクをタスクリストに追加する
             self._persist_tasks()  # 更新したタスクリストをファイルに保存する
             self._refresh()  # タイムライン・バックログ・統計を再描画する
-            self._schedule_task(next_task)  # 次回タスクの通知をスケジュールする
-            self.status_var.set(
-                f"「{task.title}」を完了。次回は {next_task.due_dt:%m/%d %H:%M} に再設定しました。")  # 次回日時を含む完了メッセージをステータスバーに表示する
+            self._schedule_task(next_task)  # 次回タスクの通知をスケジュールする（backlog は _schedule_task 側で対象外）
+            if next_task.is_scheduled:  # 次回がタイムラインに予定される（スケジュール済み）場合
+                self.status_var.set(
+                    f"「{task.title}」を完了。次回は {next_task.due_dt:%m/%d %H:%M} に再設定しました。")  # 次回日時を含む完了メッセージをステータスバーに表示する
+            else:  # 次回が「あとでやる」(backlog) として再生成された場合（開始時刻を持たない）
+                self.status_var.set(
+                    f"「{task.title}」を完了。次回を「あとでやる」に再登録しました。")  # backlog へ再登録した旨をステータスバーに表示する
             logging.info("繰り返しタスクを再登録: %s → %s", task.title, next_task.due)  # 再登録内容をログに記録する
         else:  # 繰り返しなし（次回タスクがない）なら
             self._persist_tasks()  # 完了済みタスクリストをファイルに保存する
