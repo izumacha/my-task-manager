@@ -167,19 +167,30 @@ def build_next_task(task: Task, completed_at: datetime.datetime) -> Task | None:
     中核要件「完了した時点から日/週/月/年で繰り返す」を実現する部分である。
     所要時間・繰り返し設定は引き継ぐ。
 
+    スケジュール済みタスクは次回開始時刻を持つが、「あとでやる」(backlog) の
+    繰り返しタスクは次回も backlog（開始時刻なし）として再生成し、タイムラインへ
+    勝手に固定されないようにする（タスクの scheduled / backlog という性質を保つ）。
+
     Args:
         task: 完了したタスク。
         completed_at: 完了日時（次回開始計算の起点）。
 
     Returns:
         次回分の未完了タスク。繰り返しなしの場合は None。
+        元がスケジュール済みなら次回開始時刻付き、backlog なら backlog のまま。
     """
     nxt = next_occurrence(completed_at, task.recur_unit, task.recur_interval)  # 完了時刻を起点に次回の期限日時を計算する
     if nxt is None:  # 繰り返し設定なし（RECUR_NONE）の場合は次回タスクを生成しない
         return None  # None を返して呼び出し元に「繰り返しなし」を伝える
+    # 「あとでやる」(未スケジュール) の繰り返しタスクは、次回も「あとでやる」として
+    # 再生成する。backlog タスクは開始時刻を持たない設計のため、完了時刻の時分秒を
+    # そのまま due に固定するとタイムライン上の無意味な時刻（例: 22:37:15）へ勝手に
+    # 予定が現れ、ユーザーが意図した「時間未定の繰り返し」が失われてしまう。
+    # 元がスケジュール済みなら従来どおり次回開始時刻を設定する。
+    due = nxt.strftime(ISO_FMT) if task.is_scheduled else ""  # スケジュール済みは次回時刻、backlog は空文字（あとでやる）を設定する
     return Task(  # 次回分のタスクを新しいオブジェクトとして生成して返す
         title=task.title,  # タスク名はそのまま引き継ぐ
-        due=nxt.strftime(ISO_FMT),  # 次回期限を ISO 形式の文字列に変換してセットする
+        due=due,  # スケジュール済みなら次回期限、backlog なら空文字（あとでやる）を設定する
         duration_min=task.duration_min,  # 所要時間も引き継ぐ
         recur_unit=task.recur_unit,  # 繰り返し単位も引き継ぐ
         recur_interval=task.recur_interval,  # 繰り返し間隔も引き継ぐ
