@@ -124,6 +124,23 @@ class PlayMacosSoundTests(unittest.TestCase):
         self.assertTrue(mock_thread_cls.call_args.kwargs.get("daemon"))
         mock_thread_cls.return_value.start.assert_called_once()
 
+    @patch("reminder.notifications.logging.debug")
+    @patch("reminder.notifications.subprocess.Popen", side_effect=FileNotFoundError("no afplay"))
+    @patch("reminder.notifications.threading.Thread")
+    def test_missing_afplay_is_logged_not_raised(self, mock_thread_cls, _mock_popen, mock_debug):
+        # threading.Thread を、start() 呼び出し時にターゲット関数をその場（同一スレッド）で
+        # 実行するフェイクに差し替える。実スレッドを起こして sleep で完了を待つ書き方は
+        # タイミング依存で不安定になるため避け、Popen 失敗時にスレッド内の例外が
+        # 外へ伝播せずログに残ることを決定的に検証する。
+        def _run_target_on_start(target=None, daemon=None):
+            thread = Mock()  # 実スレッドの代わりに使う Mock オブジェクトを作る
+            thread.start.side_effect = target  # start() 呼び出しでターゲットをその場実行する
+            return thread  # フェイクのスレッドオブジェクトを返す
+
+        mock_thread_cls.side_effect = _run_target_on_start  # threading.Thread(...) の呼び出しをこのフェイクに差し替える
+        _play_macos_sound()  # 例外が外へ伝播していればこの呼び出し自体が失敗する
+        mock_debug.assert_called_once()  # 失敗がデバッグログに記録されている
+
 
 class SetWindowIconTests(unittest.TestCase):
     def test_does_not_raise_when_cairosvg_unavailable(self):

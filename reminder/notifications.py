@@ -32,12 +32,20 @@ def _set_window_icon(root: tk.Tk) -> None:
 def _play_macos_sound() -> None:
     """macOS: afplay で Glass.aiff を別スレッド再生する（UI スレッドをブロックしない）。"""
     def _play_and_wait() -> None:
-        proc = subprocess.Popen(
-            ["/usr/bin/afplay", "/System/Library/Sounds/Glass.aiff"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )  # afplay コマンドをサブプロセスとして起動し、出力を捨てる
-        proc.wait()  # 再生が終わるまでサブスレッド内で待機する
+        try:
+            proc = subprocess.Popen(
+                ["/usr/bin/afplay", "/System/Library/Sounds/Glass.aiff"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )  # afplay コマンドをサブプロセスとして起動し、出力を捨てる
+            proc.wait()  # 再生が終わるまでサブスレッド内で待機する
+        except Exception as e:  # afplay が存在しない等の失敗をこのスレッド内で捕捉する
+            # ここで捕まえないと、play_notification_sound() 側の try/except は
+            # 既にスレッド起動を終えて抜けた後なので例外を捕捉できず、素の
+            # traceback が stderr に出るだけでログに何も残らない
+            # （§6: エラーを握り潰さない）。tkinter はスレッドセーフでないため
+            # このバックグラウンドスレッドから root.bell() は呼ばず、ログ記録に留める。
+            logging.debug("afplay の再生に失敗しました: %s", e)  # デバッグログに失敗理由を記録する
 
     threading.Thread(target=_play_and_wait, daemon=True).start()  # 再生処理をデーモンスレッドで開始してUIスレッドをブロックしない
 
