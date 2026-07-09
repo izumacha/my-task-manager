@@ -42,8 +42,9 @@ def _play_macos_sound() -> None:
         except Exception as e:  # afplay が存在しない等の失敗をこのスレッド内で捕捉する
             # ここで捕まえないと、play_notification_sound() 側の try/except は
             # 既にスレッド起動を終えて抜けた後なので例外を捕捉できず、素の
-            # traceback が stderr に出るだけでログにも bell フォールバックにも
-            # つながらない（§6: エラーを握り潰さない。フォールバックを用意する）。
+            # traceback が stderr に出るだけでログに何も残らない
+            # （§6: エラーを握り潰さない）。tkinter はスレッドセーフでないため
+            # このバックグラウンドスレッドから root.bell() は呼ばず、ログ記録に留める。
             logging.debug("afplay の再生に失敗しました: %s", e)  # デバッグログに失敗理由を記録する
 
     threading.Thread(target=_play_and_wait, daemon=True).start()  # 再生処理をデーモンスレッドで開始してUIスレッドをブロックしない

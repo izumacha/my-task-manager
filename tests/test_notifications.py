@@ -133,11 +133,11 @@ class PlayMacosSoundTests(unittest.TestCase):
         # タイミング依存で不安定になるため避け、Popen 失敗時にスレッド内の例外が
         # 外へ伝播せずログに残ることを決定的に検証する。
         def _run_target_on_start(target=None, daemon=None):
-            thread = Mock()
+            thread = Mock()  # 実スレッドの代わりに使う Mock オブジェクトを作る
             thread.start.side_effect = target  # start() 呼び出しでターゲットをその場実行する
-            return thread
+            return thread  # フェイクのスレッドオブジェクトを返す
 
-        mock_thread_cls.side_effect = _run_target_on_start
+        mock_thread_cls.side_effect = _run_target_on_start  # threading.Thread(...) の呼び出しをこのフェイクに差し替える
         _play_macos_sound()  # 例外が外へ伝播していればこの呼び出し自体が失敗する
         mock_debug.assert_called_once()  # 失敗がデバッグログに記録されている
 
