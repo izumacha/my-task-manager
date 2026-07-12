@@ -119,6 +119,18 @@ class BuildTimelineTests(unittest.TestCase):
         # 16時間(960分) - 60分 = 900分
         self.assertEqual(free_minutes_today(tasks, self.today, 7 * 60, 23 * 60, self.now), 900)
 
+    def test_free_minutes_exact_with_second_level_task_times(self):
+        # 秒付きの due（繰り返しタスクが完了時刻から生成する）でも合計空きが正確であること。
+        # 09:00:30-09:30:30 と 10:00:30-10:30:30 の 2 タスクで占有はちょうど 60 分。
+        # 窓 07:00-23:00 = 960 分なので空きは 900 分ちょうど。
+        # 行ごとに分へ切り捨てると端数が二重に失われて 899 分になってしまうため、
+        # 秒で合計してから最後に丸める実装であることをここで担保する。
+        tasks = [
+            _t("A", "2026-06-06T09:00:30", 30),
+            _t("B", "2026-06-06T10:00:30", 30),
+        ]
+        self.assertEqual(free_minutes_today(tasks, self.today, 7 * 60, 23 * 60, self.now), 900)
+
     def test_free_minutes_excludes_off_hours(self):
         # 就寝 23:00 の後（23:15）にタスクがあっても、窓外（23:00〜23:15）は
         # 空きに数えない。空きは 07:00〜23:00 = 960 分のみ。
