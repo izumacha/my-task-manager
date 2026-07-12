@@ -103,6 +103,19 @@ class SendLinuxNotificationTests(unittest.TestCase):
     def test_swallows_missing_command(self, _mock_popen):
         _send_linux_notification("x")
 
+    @patch("reminder.notifications.threading.Thread")
+    @patch("reminder.notifications.subprocess.Popen")
+    def test_reaps_child_process_via_daemon_thread(self, mock_popen, mock_thread_cls):
+        # notify-send の子プロセスを wait() で回収しないとゾンビプロセスとして
+        # 蓄積してしまうため、_play_macos_sound と同様にデーモンスレッドで
+        # proc.wait() を呼んで回収していることを検証する。
+        mock_proc = Mock()  # Popen が返す偽のプロセスオブジェクト
+        mock_popen.return_value = mock_proc
+        _send_linux_notification("会議")
+        # threading.Thread がプロセスの wait をターゲットにデーモンスレッドとして起動されること
+        mock_thread_cls.assert_called_once_with(target=mock_proc.wait, daemon=True)
+        mock_thread_cls.return_value.start.assert_called_once_with()
+
 
 class RingBellTests(unittest.TestCase):
     def test_ring_bell_invokes_root_bell(self):

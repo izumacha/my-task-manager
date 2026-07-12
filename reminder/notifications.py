@@ -71,11 +71,16 @@ def _send_linux_notification(body: str = "") -> None:
     if body:  # 本文テキストが指定されている場合
         args.append(body)  # 引数リストに本文を追加する（"--" 以降なのでフラグ誤認されない）
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )  # notify-send をサブプロセスとして起動し、出力を捨てる（非同期）
+        # 起動した子プロセスを別スレッドで待ち受けて回収（reap）する。
+        # wait() を呼ばないまま放置すると、プロセスは終了しても OS のプロセステーブルに
+        # ゾンビとして残り続ける（_play_macos_sound の afplay と同じ理由）。長時間起動した
+        # アプリでタスク通知が繰り返し発火するとゾンビが蓄積するため、ここで回収する。
+        threading.Thread(target=proc.wait, daemon=True).start()  # 子プロセスの終了待ちをデーモンスレッドに任せてUIスレッドをブロックしない
     except Exception as e:  # notify-send が存在しないなどのエラーを捕捉する
         # notify-send が利用できない場合はログのみ残し、呼び出し側の bell にフォールバックする
         logging.debug("notify-send の送信に失敗しました: %s", e)  # デバッグログにエラー内容を記録する
