@@ -76,11 +76,22 @@ def _send_linux_notification(body: str = "") -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )  # notify-send をサブプロセスとして起動し、出力を捨てる（非同期）
-        # 起動した子プロセスを別スレッドで待ち受けて回収（reap）する。
-        # wait() を呼ばないまま放置すると、プロセスは終了しても OS のプロセステーブルに
-        # ゾンビとして残り続ける（_play_macos_sound の afplay と同じ理由）。長時間起動した
-        # アプリでタスク通知が繰り返し発火するとゾンビが蓄積するため、ここで回収する。
-        threading.Thread(target=proc.wait, daemon=True).start()  # 子プロセスの終了待ちをデーモンスレッドに任せてUIスレッドをブロックしない
+
+        def _reap() -> None:
+            # 起動した子プロセスを別スレッドで待ち受けて回収（reap）する。
+            # wait() を呼ばないまま放置すると、プロセスは終了しても OS のプロセステーブルに
+            # ゾンビとして残り続ける（_play_macos_sound の afplay と同じ理由）。長時間起動した
+            # アプリでタスク通知が繰り返し発火するとゾンビが蓄積するため、ここで回収する。
+            try:
+                proc.wait()  # 子プロセスの終了を待って回収する
+            except Exception as e:  # wait() 自体が失敗するまれなケースを捕捉する
+                # ここで捕まえないと、この関数はスレッド起動を終えて抜けた後なので
+                # 例外を捕捉できず、素の traceback が stderr に出るだけでログに何も
+                # 残らない（_play_macos_sound の _play_and_wait と同じ理由。§6 エラーを
+                # 握り潰さない）。tkinter はスレッドセーフでないため root.bell() は呼ばない。
+                logging.debug("notify-send プロセスの回収に失敗しました: %s", e)  # デバッグログに失敗理由を記録する
+
+        threading.Thread(target=_reap, daemon=True).start()  # 子プロセスの終了待ちをデーモンスレッドに任せてUIスレッドをブロックしない
     except Exception as e:  # notify-send が存在しないなどのエラーを捕捉する
         # notify-send が利用できない場合はログのみ残し、呼び出し側の bell にフォールバックする
         logging.debug("notify-send の送信に失敗しました: %s", e)  # デバッグログにエラー内容を記録する

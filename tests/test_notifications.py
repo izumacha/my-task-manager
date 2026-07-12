@@ -112,9 +112,33 @@ class SendLinuxNotificationTests(unittest.TestCase):
         mock_proc = Mock()  # Popen が返す偽のプロセスオブジェクト
         mock_popen.return_value = mock_proc
         _send_linux_notification("会議")
-        # threading.Thread がプロセスの wait をターゲットにデーモンスレッドとして起動されること
-        mock_thread_cls.assert_called_once_with(target=mock_proc.wait, daemon=True)
+        # threading.Thread がデーモンスレッドとして起動されること
+        mock_thread_cls.assert_called_once()
+        self.assertTrue(mock_thread_cls.call_args.kwargs.get("daemon"))
         mock_thread_cls.return_value.start.assert_called_once_with()
+        # スレッドのターゲット関数を実行すると proc.wait() が呼ばれ、子プロセスが回収されること
+        target = mock_thread_cls.call_args.kwargs["target"]
+        target()
+        mock_proc.wait.assert_called_once_with()
+
+    @patch("reminder.notifications.logging.debug")
+    @patch("reminder.notifications.subprocess.Popen")
+    def test_reap_failure_is_logged_not_raised(self, mock_popen, mock_debug):
+        # _play_macos_sound の _play_and_wait と同様、wait() 自体が失敗する
+        # まれなケースでも例外を外へ伝播させずログに残すことを検証する。
+        # threading.Thread を、start() 呼び出し時にターゲット関数をその場（同一スレッド）で
+        # 実行するフェイクに差し替える（実スレッド+sleep 待ちはタイミング依存で不安定なため避ける）。
+        def _run_target_on_start(target=None, daemon=None):
+            thread = Mock()  # 実スレッドの代わりに使う Mock オブジェクトを作る
+            thread.start.side_effect = target  # start() 呼び出しでターゲットをその場実行する
+            return thread  # フェイクのスレッドオブジェクトを返す
+
+        mock_proc = Mock()  # Popen が返す偽のプロセスオブジェクト
+        mock_proc.wait.side_effect = OSError("reap failed")  # wait() が失敗するケースを模す
+        mock_popen.return_value = mock_proc
+        with patch("reminder.notifications.threading.Thread", side_effect=_run_target_on_start):
+            _send_linux_notification("会議")  # 例外が外へ伝播していればこの呼び出し自体が失敗する
+        mock_debug.assert_called_once()  # 失敗がデバッグログに記録されている
 
 
 class RingBellTests(unittest.TestCase):
