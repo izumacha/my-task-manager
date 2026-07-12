@@ -176,14 +176,17 @@ def free_minutes_today(
     起床〜就寝の窓 [day_start, day_end] に重なる部分のみを対象とする）。
     """
     day_start, day_end = day_bounds(date, wake_min, sleep_min)  # 起床・就寝日時を取得する
-    total = 0  # 空き時間の合計分数を 0 で初期化する
+    total_seconds = 0.0  # 空き時間の合計「秒数」を 0 で初期化する（分に丸める前に秒で貯める）
     for row in build_day_timeline(tasks, date, wake_min, sleep_min, now):  # 各タイムライン行についてループする
         if row.kind != ROW_FREE:  # 空き時間行でない場合（タスク行）
             continue  # スキップして次の行へ進む
         s, e = max(row.start, day_start), min(row.end, day_end)  # 空き時間を起床〜就寝の窓にクリップする
         if e > s:  # クリップ後にまだ正の長さがある場合
-            total += int((e - s).total_seconds() // 60)  # その長さ（分）を合計に加算する
-    return total  # 起床〜就寝の窓内の空き時間合計分数を返す
+            # 行ごとに分へ丸めず「秒」を貯める。行単位で切り捨てると各行の端数が
+            # 独立に捨てられ、秒付き時刻（繰り返しタスクが生成する due）で合計が
+            # 実際より数分少なくなるため、丸めは最後にまとめて 1 回だけ行う。
+            total_seconds += (e - s).total_seconds()  # その長さ（秒）を合計に加算する
+    return int(total_seconds // 60)  # 合計秒を最後に分へ切り捨てて返す（起床〜就寝の窓内の空き時間合計分数）
 
 
 def max_free_slot(
