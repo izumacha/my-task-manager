@@ -937,11 +937,17 @@ class PlannerApp:
             except Exception as e:  # スケジュール登録の例外を捕捉して残りのタスクの処理を続ける
                 logging.warning("タスクの通知スケジュールに失敗しました: %s: %s", task.id, e)  # 失敗してもクラッシュさせず警告ログにタスクIDと原因を記録する
 
-    def _schedule_task(self, task: Task) -> None:
-        """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。"""
+    def _schedule_task(self, task: Task, now: datetime.datetime | None = None) -> None:
+        """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。
+
+        now を指定すると現在時刻の再取得を行わない。早発火の再登録時に、判定に使った
+        時刻と同じ値で遅延を計算するために使う（2 回目の時刻取得までに開始時刻を
+        過ぎると過去ガードで登録されず通知が永久に失われるレースを防ぐ）。
+        """
         if not task.is_scheduled or task.completed:  # タイムラインに予定されていない、または既に完了済みなら
             return  # 通知登録の対象外なので処理を終える
-        now = self._get_now()  # 通知スケジュール登録時点の現在時刻を _get_now() 経由で取得する
+        if now is None:  # 呼び出し元から現在時刻が渡されていなければ
+            now = self._get_now()  # 通知スケジュール登録時点の現在時刻を _get_now() 経由で取得する
         if task.due_dt <= now:  # 開始時刻が既に過去なら
             return  # 通知登録しないで処理を終える
         delay_ms = delay_ms_until(now, task.due_dt)  # 現在時刻から開始時刻までの待ち時間（ミリ秒）を計算する
@@ -960,12 +966,11 @@ class PlannerApp:
             return  # 通知を出さずに処理を終える
         now = self._get_now()  # 早発火の判定と再登録の遅延計算で同じ現在時刻を使うため 1 回だけ取得する
         if now < task.due_dt:  # 現在時刻が開始時刻前ならスケジュールし直す（クランプや Tcl タイマーのミリ秒切り捨てで発火が早まった場合）
-            # _schedule_task() を経由すると、その過去ガード（due_dt <= now）が 2 回目の時刻取得を
-            # 行うため、この判定との間に開始時刻を過ぎると通知が登録されず永久に失われる。
-            # ここでは after() を直接登録して、再発火時に必ずこのコールバックへ戻るようにする。
-            # delay_ms_until() が 0〜MAX_AFTER_MS にクランプするため、_schedule_task と同じ上限が保たれる。
-            self.jobs[task_id] = self.root.after(
-                delay_ms_until(now, task.due_dt), lambda: self._on_task_due(task_id))  # 残り時間後に自分自身を再度呼ぶジョブを登録し ID を記録する
+            # ここで取得した now をそのまま渡して再登録する（_schedule_task 内で時刻を
+            # 再取得すると、この判定との間に開始時刻を過ぎたとき過去ガードに弾かれて
+            # 通知が永久に失われるレースがあるため。登録処理自体は _schedule_task に
+            # 一本化し、例外時のジョブ辞書の後始末も同じ経路で行う）
+            self._schedule_task(task, now=now)  # 判定に使った時刻で通知ジョブを再登録する
             return  # 今は通知を出さずに処理を終える
         play_notification_sound(self.root, task.title)  # 通知音を再生する
         messagebox.showinfo("my-task-manager", f"⏰ {task.title}")  # 開始時刻を知らせるポップアップダイアログを表示する
