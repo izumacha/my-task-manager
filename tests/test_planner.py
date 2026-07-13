@@ -262,6 +262,19 @@ class MoveTests(AppTestCase):
         self.assertEqual(task.due, "")
         self.assertNotIn(task.id, app.jobs)  # 通知ジョブが解除される
 
+    def test_move_to_backlog_rejects_completed(self):
+        # 完了済みタスクの due を空にすると、タイムライン（is_scheduled 条件）からも
+        # バックログ（未完了条件）からも外れて UI から消失するため、移動を拒否する
+        due = _iso(datetime.datetime.now() + datetime.timedelta(hours=1))  # 1 時間後の開始時刻文字列を作る
+        task = Task(title="x", due=due, completed=True,
+                    completed_at=_iso(datetime.datetime.now()))  # 完了済みのスケジュール済みタスクを作る
+        app, _ = self._app([task])  # タスク 1 件でアプリを生成する
+        app._tl_selected = task.id  # カレンダー上でこのタスクを選択状態にする
+        app.move_to_backlog()  # バックログへの移動を試みる
+        self.assertEqual(task.due, due)  # due は変更されずに保持される
+        self.assertIn(task, app.tasks)  # タスクはリストに残っている
+        self.assertIn("完了済み", app.status_var.get())  # 移動できない旨のメッセージが表示される
+
     def test_schedule_backlog_sets_due_today(self):
         task = Task(title="x", due="")
         app, _ = self._app([task])
