@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from reminder import theme
 from reminder.app import PlannerApp, ReminderApp
 from reminder.config import Prefs
-from reminder.recurrence import RECUR_DAILY, RECUR_LABELS, RECUR_NONE
+from reminder.recurrence import RECUR_DAILY, RECUR_LABELS
 from reminder.task import DEFAULT_DURATION, ISO_FMT, Task
 
 
