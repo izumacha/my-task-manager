@@ -939,8 +939,14 @@ class PlannerApp:
         task = self._find(task_id)  # タスク ID でタスクを検索する
         if task is None or task.completed:  # タスクが存在しないか既に完了済みなら
             return  # 通知を出さずに処理を終える
-        if self._get_now() < task.due_dt:  # 現在時刻が開始時刻前ならスケジュールし直す（クランプで起動が早まった場合）
-            self._schedule_task(task)  # 通知ジョブを再登録する
+        now = self._get_now()  # 早発火の判定と再登録の遅延計算で同じ現在時刻を使うため 1 回だけ取得する
+        if now < task.due_dt:  # 現在時刻が開始時刻前ならスケジュールし直す（クランプや Tcl タイマーのミリ秒切り捨てで発火が早まった場合）
+            # _schedule_task() を経由すると、その過去ガード（due_dt <= now）が 2 回目の時刻取得を
+            # 行うため、この判定との間に開始時刻を過ぎると通知が登録されず永久に失われる。
+            # ここでは after() を直接登録して、再発火時に必ずこのコールバックへ戻るようにする。
+            # delay_ms_until() が 0〜MAX_AFTER_MS にクランプするため、_schedule_task と同じ上限が保たれる。
+            self.jobs[task_id] = self.root.after(
+                delay_ms_until(now, task.due_dt), lambda: self._on_task_due(task_id))  # 残り時間後に自分自身を再度呼ぶジョブを登録し ID を記録する
             return  # 今は通知を出さずに処理を終える
         play_notification_sound(self.root, task.title)  # 通知音を再生する
         messagebox.showinfo("my-task-manager", f"⏰ {task.title}")  # 開始時刻を知らせるポップアップダイアログを表示する

@@ -352,6 +352,25 @@ class OnTaskDueTests(AppTestCase):
 
     @patch("reminder.app.messagebox.showinfo")
     @patch("reminder.app.play_notification_sound")
+    def test_early_fire_rearms_even_if_due_passes(self, mock_sound, mock_info):
+        # Tcl タイマーはミリ秒切り捨てで約 1ms 早く発火し得る。早発火の再登録を
+        # _schedule_task 経由にすると、その過去ガードの 2 回目の時刻取得までに
+        # 開始時刻を過ぎた場合に通知が永久に失われるため、境界（1ms 前 → due 到達）で
+        # ジョブが必ず再登録されることを確認する
+        due = datetime.datetime.now().replace(microsecond=0) + datetime.timedelta(hours=1)  # 1 時間後の開始時刻を作る
+        task = Task(title="x", due=_iso(due))  # その時刻に予定されたタスクを作る
+        app, root = self._app([task])  # タスク 1 件でアプリを生成する
+        # 1 回目の時刻取得は due の 1ms 前（早発火）、次に取得されるなら due ちょうどを返す
+        with patch.object(app, "_get_now",
+                          side_effect=[due - datetime.timedelta(milliseconds=1), due]):
+            app._on_task_due(task.id)  # 早発火したコールバックを実行する
+        mock_info.assert_not_called()  # まだ開始時刻前なので通知は出ない
+        root.after.assert_called_once()  # after() でジョブが直接再登録される（過去ガードで落とされない）
+        self.assertEqual(root.after.call_args[0][0], 1)  # 残り 1ms の遅延で再登録されている
+        self.assertIn(task.id, app.jobs)  # ジョブ ID が辞書に記録されている
+
+    @patch("reminder.app.messagebox.showinfo")
+    @patch("reminder.app.play_notification_sound")
     def test_completed_task_is_noop(self, mock_sound, mock_info):
         task = Task(title="x", due=_iso(datetime.datetime.now() - datetime.timedelta(minutes=1)),
                     completed=True, completed_at=_iso(datetime.datetime.now()))
