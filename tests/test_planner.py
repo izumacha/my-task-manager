@@ -117,6 +117,25 @@ class WakeSleepTests(AppTestCase):
         self.assertEqual(app._wake_min(), 7 * 60)
         self.assertEqual(app._sleep_min(), 23 * 60)
 
+    def test_range_change_unchanged_hour_preserves_minutes(self):
+        # スピンボックスは「時」単位のため、時が変わらないフォーカス移動だけで
+        # settings.json の分単位の値（"07:30" 等）が "07:00" に切り捨てられないことを確認する
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
+        app.wake_var.set("7")  # 起床スピンボックスの表示値（時のみ）をそのままにする
+        app.sleep_var.set("22")  # 就寝スピンボックスの表示値（時のみ）をそのままにする
+        app._on_range_change()  # FocusOut と同じ経路で設定反映処理を呼ぶ
+        self.assertEqual(app.prefs.wake, "07:30")  # 起床時刻の分（:30）が保持される
+        self.assertEqual(app.prefs.sleep, "22:15")  # 就寝時刻の分（:15）が保持される
+
+    def test_range_change_new_hour_persists(self):
+        # 時が実際に変わったときは新しい「HH:00」で設定が更新されることを確認する
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
+        app.wake_var.set("8")  # 起床スピンボックスを 8 時に変更する
+        app.sleep_var.set("22")  # 就寝スピンボックスは変更しない
+        app._on_range_change()  # FocusOut と同じ経路で設定反映処理を呼ぶ
+        self.assertEqual(app.prefs.wake, "08:00")  # 変更した起床時刻は「08:00」で保存される
+        self.assertEqual(app.prefs.sleep, "22:15")  # 変更していない就寝時刻の分は保持される
+
 
 class AddToTimelineTests(AppTestCase):
     @patch("reminder.app.messagebox.showwarning")

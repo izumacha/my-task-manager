@@ -440,13 +440,20 @@ class PlannerApp:
         return unit_for_label(self.recur_var.get()), interval  # 繰り返し単位の内部コードと間隔のタプルを返す
 
     def _on_range_change(self) -> None:
-        """起床/就寝の変更を設定へ反映し、タイムラインを再描画する。"""
+        """起床/就寝の変更を設定へ反映し、タイムラインを再描画する。
+
+        スピンボックスは「時」単位のため、時が変わっていないときは設定へ
+        書き戻さない（settings.json に "07:30" のような分単位の値があっても、
+        フォーカス移動だけで "07:00" に切り捨てられるのを防ぐ）。
+        """
         wake = self._coerce_int(self.wake_var.get(), 0, 23)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
         sleep = self._coerce_int(self.sleep_var.get(), 0, 23)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
         self.wake_var.set(f"{wake:02d}")  # クランプ後の起床時刻を 2 桁で入力欄に書き戻す
         self.sleep_var.set(f"{sleep:02d}")  # クランプ後の就寝時刻を 2 桁で入力欄に書き戻す
-        self.prefs.wake = min_to_hhmm(wake * 60)  # 起床時刻を「分」→「HH:MM」文字列に変換して設定に保存する
-        self.prefs.sleep = min_to_hhmm(sleep * 60)  # 就寝時刻を「分」→「HH:MM」文字列に変換して設定に保存する
+        if wake != self._wake_min() // 60:  # 起床の「時」が保存済みの値の「時」から実際に変わったときだけ
+            self.prefs.wake = min_to_hhmm(wake * 60)  # 起床時刻を「分」→「HH:MM」文字列に変換して設定に保存する
+        if sleep != self._sleep_min() // 60:  # 就寝の「時」が保存済みの値の「時」から実際に変わったときだけ
+            self.prefs.sleep = min_to_hhmm(sleep * 60)  # 就寝時刻を「分」→「HH:MM」文字列に変換して設定に保存する
         save_prefs(self.prefs)  # 更新した設定をファイルに永続化する
         self._refresh()  # タイムライン・バックログ・統計を再描画する
 
