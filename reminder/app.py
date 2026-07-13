@@ -409,12 +409,18 @@ class PlannerApp:
     # ------------------------------------------------------------ 入力正規化
 
     @staticmethod
-    def _coerce_int(raw: str, min_value: int, max_value: int) -> int:
-        """文字列を整数に変換し、[min_value, max_value] にクランプして返す。"""
+    def _coerce_int(raw: str, min_value: int, max_value: int, default: int | None = None) -> int:
+        """文字列を整数に変換し、[min_value, max_value] にクランプして返す。
+
+        default を指定すると、非数値のときに最小値ではなくその値へフォールバックする
+        （例: 起床/就寝の「時」は 0 ではなく保存済みの値に戻したい）。
+        """
         try:
             value = int(raw)  # 文字列を整数に変換する（失敗したら except 節へ）
         except (TypeError, ValueError):
-            return min_value  # 変換に失敗したときは最小値を返す（非数値のフォールバック）
+            if default is None:  # フォールバック先の指定がなければ
+                return min_value  # 従来どおり最小値を返す（非数値のフォールバック）
+            value = default  # 指定されたフォールバック値を採用する（この後の行で範囲内にクランプする）
         return max(min_value, min(max_value, value))  # 最小・最大の範囲に収めて返す
 
     def _input_start_time(self) -> datetime.time:
@@ -440,13 +446,26 @@ class PlannerApp:
         return unit_for_label(self.recur_var.get()), interval  # 繰り返し単位の内部コードと間隔のタプルを返す
 
     def _on_range_change(self) -> None:
-        """起床/就寝の変更を設定へ反映し、タイムラインを再描画する。"""
-        wake = self._coerce_int(self.wake_var.get(), 0, 23)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
-        sleep = self._coerce_int(self.sleep_var.get(), 0, 23)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
+        """起床/就寝の変更を設定へ反映し、タイムラインを再描画する。
+
+        スピンボックスは「時」単位のため、時が変わっていないときは設定へ
+        書き戻さない（settings.json に "07:30" のような分単位の値があっても、
+        フォーカス移動だけで "07:00" に切り捨てられるのを防ぐ）。
+        """
+        stored_wake_hour = self._wake_min() // 60  # 保存済みの起床時刻から「時」を取り出す（比較とフォールバックに使う）
+        stored_sleep_hour = self._sleep_min() // 60  # 保存済みの就寝時刻から「時」を取り出す（比較とフォールバックに使う）
+        # 非数値・空欄のときは 0 ではなく保存済みの「時」へフォールバックする
+        # （空欄のままタブ移動しただけで "00:00" が書き込まれて設定が壊れるのを防ぐ）
+        wake = self._coerce_int(self.wake_var.get(), 0, 23, default=stored_wake_hour)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
+        sleep = self._coerce_int(self.sleep_var.get(), 0, 23, default=stored_sleep_hour)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
         self.wake_var.set(f"{wake:02d}")  # クランプ後の起床時刻を 2 桁で入力欄に書き戻す
         self.sleep_var.set(f"{sleep:02d}")  # クランプ後の就寝時刻を 2 桁で入力欄に書き戻す
-        self.prefs.wake = min_to_hhmm(wake * 60)  # 起床時刻を「分」→「HH:MM」文字列に変換して設定に保存する
-        self.prefs.sleep = min_to_hhmm(sleep * 60)  # 就寝時刻を「分」→「HH:MM」文字列に変換して設定に保存する
+        # 注: 保存値が不正な文字列でも _wake_min()/_sleep_min() が既定値に読み替えるため実害はなく、
+        # 分単位の値の保全を優先して「時が変わらない限り書き戻さない」仕様とする（自動修復はしない）。
+        if wake != stored_wake_hour:  # 起床の「時」が保存済みの値の「時」から実際に変わったときだけ
+            self.prefs.wake = min_to_hhmm(wake * 60)  # 起床時刻を「分」→「HH:MM」文字列に変換して設定に保存する
+        if sleep != stored_sleep_hour:  # 就寝の「時」が保存済みの値の「時」から実際に変わったときだけ
+            self.prefs.sleep = min_to_hhmm(sleep * 60)  # 就寝時刻を「分」→「HH:MM」文字列に変換して設定に保存する
         save_prefs(self.prefs)  # 更新した設定をファイルに永続化する
         self._refresh()  # タイムライン・バックログ・統計を再描画する
 
@@ -580,6 +599,11 @@ class PlannerApp:
         if task is None:  # タスクが選択されていなければ
             self.status_var.set("移動するタスクを選択してください。")  # 選択を促すメッセージをステータスバーに表示する
             return  # 何もせずに処理を終える
+        if task.completed:  # 既に完了済みのタスクなら
+            # 完了済みタスクの due を空にすると、タイムライン（is_scheduled 条件）からも
+            # バックログ（未完了条件）からも外れて UI から完全に消えてしまうため、移動を拒否する。
+            self.status_var.set("完了済みのタスクは移動できません。")  # 移動できない旨をステータスバーに表示する
+            return  # due を変更せずに処理を終える
         self._cancel_job(task.id)  # このタスクの保留中通知ジョブをキャンセルする
         task.due = ""  # 開始時刻を空にしてバックログ（未予定）扱いにする
         # バックログへ移すとカレンダーから消えるため、タイムラインの選択を解除する。
@@ -913,11 +937,17 @@ class PlannerApp:
             except Exception as e:  # スケジュール登録の例外を捕捉して残りのタスクの処理を続ける
                 logging.warning("タスクの通知スケジュールに失敗しました: %s: %s", task.id, e)  # 失敗してもクラッシュさせず警告ログにタスクIDと原因を記録する
 
-    def _schedule_task(self, task: Task) -> None:
-        """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。"""
+    def _schedule_task(self, task: Task, now: datetime.datetime | None = None) -> None:
+        """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。
+
+        now を指定すると現在時刻の再取得を行わない。早発火の再登録時に、判定に使った
+        時刻と同じ値で遅延を計算するために使う（2 回目の時刻取得までに開始時刻を
+        過ぎると過去ガードで登録されず通知が永久に失われるレースを防ぐ）。
+        """
         if not task.is_scheduled or task.completed:  # タイムラインに予定されていない、または既に完了済みなら
             return  # 通知登録の対象外なので処理を終える
-        now = self._get_now()  # 通知スケジュール登録時点の現在時刻を _get_now() 経由で取得する
+        if now is None:  # 呼び出し元から現在時刻が渡されていなければ
+            now = self._get_now()  # 通知スケジュール登録時点の現在時刻を _get_now() 経由で取得する
         if task.due_dt <= now:  # 開始時刻が既に過去なら
             return  # 通知登録しないで処理を終える
         delay_ms = delay_ms_until(now, task.due_dt)  # 現在時刻から開始時刻までの待ち時間（ミリ秒）を計算する
@@ -934,8 +964,13 @@ class PlannerApp:
         task = self._find(task_id)  # タスク ID でタスクを検索する
         if task is None or task.completed:  # タスクが存在しないか既に完了済みなら
             return  # 通知を出さずに処理を終える
-        if self._get_now() < task.due_dt:  # 現在時刻が開始時刻前ならスケジュールし直す（クランプで起動が早まった場合）
-            self._schedule_task(task)  # 通知ジョブを再登録する
+        now = self._get_now()  # 早発火の判定と再登録の遅延計算で同じ現在時刻を使うため 1 回だけ取得する
+        if now < task.due_dt:  # 現在時刻が開始時刻前ならスケジュールし直す（クランプや Tcl タイマーのミリ秒切り捨てで発火が早まった場合）
+            # ここで取得した now をそのまま渡して再登録する（_schedule_task 内で時刻を
+            # 再取得すると、この判定との間に開始時刻を過ぎたとき過去ガードに弾かれて
+            # 通知が永久に失われるレースがあるため。登録処理自体は _schedule_task に
+            # 一本化し、例外時のジョブ辞書の後始末も同じ経路で行う）
+            self._schedule_task(task, now=now)  # 判定に使った時刻で通知ジョブを再登録する
             return  # 今は通知を出さずに処理を終える
         play_notification_sound(self.root, task.title)  # 通知音を再生する
         messagebox.showinfo("my-task-manager", f"⏰ {task.title}")  # 開始時刻を知らせるポップアップダイアログを表示する

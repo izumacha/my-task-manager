@@ -117,6 +117,37 @@ class WakeSleepTests(AppTestCase):
         self.assertEqual(app._wake_min(), 7 * 60)
         self.assertEqual(app._sleep_min(), 23 * 60)
 
+    def test_range_change_unchanged_hour_preserves_minutes(self):
+        # スピンボックスは「時」単位のため、時が変わらないフォーカス移動だけで
+        # settings.json の分単位の値（"07:30" 等）が "07:00" に切り捨てられないことを確認する
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
+        app.wake_var.set("7")  # 起床スピンボックスの表示値（時のみ）をそのままにする
+        app.sleep_var.set("22")  # 就寝スピンボックスの表示値（時のみ）をそのままにする
+        app._on_range_change()  # FocusOut と同じ経路で設定反映処理を呼ぶ
+        self.assertEqual(app.prefs.wake, "07:30")  # 起床時刻の分（:30）が保持される
+        self.assertEqual(app.prefs.sleep, "22:15")  # 就寝時刻の分（:15）が保持される
+
+    def test_range_change_blank_input_falls_back_to_stored_hour(self):
+        # スピンボックスを空にしたままタブ移動しても、0 時ではなく保存済みの「時」へ
+        # フォールバックし、設定が "00:00" に破壊されないことを確認する
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
+        app.wake_var.set("")  # 起床スピンボックスを空欄にする（全選択して削除した状態を再現）
+        app.sleep_var.set("abc")  # 就寝スピンボックスに非数値を入力した状態を再現する
+        app._on_range_change()  # FocusOut と同じ経路で設定反映処理を呼ぶ
+        self.assertEqual(app.prefs.wake, "07:30")  # 起床時刻は保存済みの値のまま破壊されない
+        self.assertEqual(app.prefs.sleep, "22:15")  # 就寝時刻も保存済みの値のまま破壊されない
+        self.assertEqual(app.wake_var.get(), "07")  # 入力欄には保存済みの「時」が書き戻される
+        self.assertEqual(app.sleep_var.get(), "22")  # 入力欄には保存済みの「時」が書き戻される
+
+    def test_range_change_new_hour_persists(self):
+        # 時が実際に変わったときは新しい「HH:00」で設定が更新されることを確認する
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
+        app.wake_var.set("8")  # 起床スピンボックスを 8 時に変更する
+        app.sleep_var.set("22")  # 就寝スピンボックスは変更しない
+        app._on_range_change()  # FocusOut と同じ経路で設定反映処理を呼ぶ
+        self.assertEqual(app.prefs.wake, "08:00")  # 変更した起床時刻は「08:00」で保存される
+        self.assertEqual(app.prefs.sleep, "22:15")  # 変更していない就寝時刻の分は保持される
+
 
 class AddToTimelineTests(AppTestCase):
     @patch("reminder.app.messagebox.showwarning")
@@ -262,6 +293,19 @@ class MoveTests(AppTestCase):
         self.assertEqual(task.due, "")
         self.assertNotIn(task.id, app.jobs)  # 通知ジョブが解除される
 
+    def test_move_to_backlog_rejects_completed(self):
+        # 完了済みタスクの due を空にすると、タイムライン（is_scheduled 条件）からも
+        # バックログ（未完了条件）からも外れて UI から消失するため、移動を拒否する
+        due = _iso(datetime.datetime.now() + datetime.timedelta(hours=1))  # 1 時間後の開始時刻文字列を作る
+        task = Task(title="x", due=due, completed=True,
+                    completed_at=_iso(datetime.datetime.now()))  # 完了済みのスケジュール済みタスクを作る
+        app, _ = self._app([task])  # タスク 1 件でアプリを生成する
+        app._tl_selected = task.id  # カレンダー上でこのタスクを選択状態にする
+        app.move_to_backlog()  # バックログへの移動を試みる
+        self.assertEqual(task.due, due)  # due は変更されずに保持される
+        self.assertIn(task, app.tasks)  # タスクはリストに残っている
+        self.assertIn("完了済み", app.status_var.get())  # 移動できない旨のメッセージが表示される
+
     def test_schedule_backlog_sets_due_today(self):
         task = Task(title="x", due="")
         app, _ = self._app([task])
@@ -336,6 +380,26 @@ class OnTaskDueTests(AppTestCase):
         app._on_task_due(task.id)
         mock_info.assert_not_called()
         root.after.assert_called_once()
+
+    @patch("reminder.app.messagebox.showinfo")
+    @patch("reminder.app.play_notification_sound")
+    def test_early_fire_rearms_even_if_due_passes(self, mock_sound, mock_info):
+        # Tcl タイマーはミリ秒切り捨てで約 1ms 早く発火し得る。再登録時に時刻を
+        # 取り直すと、早発火判定との間に開始時刻を過ぎた場合に過去ガードで弾かれて
+        # 通知が永久に失われるため、判定に使った now を _schedule_task へ渡して
+        # 境界（1ms 前 → due 到達）でもジョブが必ず再登録されることを確認する
+        due = datetime.datetime.now().replace(microsecond=0) + datetime.timedelta(hours=1)  # 1 時間後の開始時刻を作る
+        task = Task(title="x", due=_iso(due))  # その時刻に予定されたタスクを作る
+        app, root = self._app([task])  # タスク 1 件でアプリを生成する
+        # 1 回目の時刻取得は due の 1ms 前（早発火）、もし時刻を取り直す実装なら due ちょうどが返り
+        # 過去ガードで再登録されなくなる（このテストが失敗する）
+        with patch.object(app, "_get_now",
+                          side_effect=[due - datetime.timedelta(milliseconds=1), due]):
+            app._on_task_due(task.id)  # 早発火したコールバックを実行する
+        mock_info.assert_not_called()  # まだ開始時刻前なので通知は出ない
+        root.after.assert_called_once()  # ジョブが再登録される（時刻を取り直さないので過去ガードで落とされない）
+        self.assertEqual(root.after.call_args[0][0], 1)  # 残り 1ms の遅延で再登録されている
+        self.assertIn(task.id, app.jobs)  # ジョブ ID が辞書に記録されている
 
     @patch("reminder.app.messagebox.showinfo")
     @patch("reminder.app.play_notification_sound")
