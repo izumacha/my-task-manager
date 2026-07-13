@@ -409,12 +409,18 @@ class PlannerApp:
     # ------------------------------------------------------------ 入力正規化
 
     @staticmethod
-    def _coerce_int(raw: str, min_value: int, max_value: int) -> int:
-        """文字列を整数に変換し、[min_value, max_value] にクランプして返す。"""
+    def _coerce_int(raw: str, min_value: int, max_value: int, default: int | None = None) -> int:
+        """文字列を整数に変換し、[min_value, max_value] にクランプして返す。
+
+        default を指定すると、非数値のときに最小値ではなくその値へフォールバックする
+        （例: 起床/就寝の「時」は 0 ではなく保存済みの値に戻したい）。
+        """
         try:
             value = int(raw)  # 文字列を整数に変換する（失敗したら except 節へ）
         except (TypeError, ValueError):
-            return min_value  # 変換に失敗したときは最小値を返す（非数値のフォールバック）
+            if default is None:  # フォールバック先の指定がなければ
+                return min_value  # 従来どおり最小値を返す（非数値のフォールバック）
+            value = default  # 指定されたフォールバック値を採用する（この後の行で範囲内にクランプする）
         return max(min_value, min(max_value, value))  # 最小・最大の範囲に収めて返す
 
     def _input_start_time(self) -> datetime.time:
@@ -446,13 +452,19 @@ class PlannerApp:
         書き戻さない（settings.json に "07:30" のような分単位の値があっても、
         フォーカス移動だけで "07:00" に切り捨てられるのを防ぐ）。
         """
-        wake = self._coerce_int(self.wake_var.get(), 0, 23)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
-        sleep = self._coerce_int(self.sleep_var.get(), 0, 23)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
+        stored_wake_hour = self._wake_min() // 60  # 保存済みの起床時刻から「時」を取り出す（比較とフォールバックに使う）
+        stored_sleep_hour = self._sleep_min() // 60  # 保存済みの就寝時刻から「時」を取り出す（比較とフォールバックに使う）
+        # 非数値・空欄のときは 0 ではなく保存済みの「時」へフォールバックする
+        # （空欄のままタブ移動しただけで "00:00" が書き込まれて設定が壊れるのを防ぐ）
+        wake = self._coerce_int(self.wake_var.get(), 0, 23, default=stored_wake_hour)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
+        sleep = self._coerce_int(self.sleep_var.get(), 0, 23, default=stored_sleep_hour)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
         self.wake_var.set(f"{wake:02d}")  # クランプ後の起床時刻を 2 桁で入力欄に書き戻す
         self.sleep_var.set(f"{sleep:02d}")  # クランプ後の就寝時刻を 2 桁で入力欄に書き戻す
-        if wake != self._wake_min() // 60:  # 起床の「時」が保存済みの値の「時」から実際に変わったときだけ
+        # 注: 保存値が不正な文字列でも _wake_min()/_sleep_min() が既定値に読み替えるため実害はなく、
+        # 分単位の値の保全を優先して「時が変わらない限り書き戻さない」仕様とする（自動修復はしない）。
+        if wake != stored_wake_hour:  # 起床の「時」が保存済みの値の「時」から実際に変わったときだけ
             self.prefs.wake = min_to_hhmm(wake * 60)  # 起床時刻を「分」→「HH:MM」文字列に変換して設定に保存する
-        if sleep != self._sleep_min() // 60:  # 就寝の「時」が保存済みの値の「時」から実際に変わったときだけ
+        if sleep != stored_sleep_hour:  # 就寝の「時」が保存済みの値の「時」から実際に変わったときだけ
             self.prefs.sleep = min_to_hhmm(sleep * 60)  # 就寝時刻を「分」→「HH:MM」文字列に変換して設定に保存する
         save_prefs(self.prefs)  # 更新した設定をファイルに永続化する
         self._refresh()  # タイムライン・バックログ・統計を再描画する

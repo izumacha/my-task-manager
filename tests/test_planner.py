@@ -127,6 +127,18 @@ class WakeSleepTests(AppTestCase):
         self.assertEqual(app.prefs.wake, "07:30")  # 起床時刻の分（:30）が保持される
         self.assertEqual(app.prefs.sleep, "22:15")  # 就寝時刻の分（:15）が保持される
 
+    def test_range_change_blank_input_falls_back_to_stored_hour(self):
+        # スピンボックスを空にしたままタブ移動しても、0 時ではなく保存済みの「時」へ
+        # フォールバックし、設定が "00:00" に破壊されないことを確認する
+        app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
+        app.wake_var.set("")  # 起床スピンボックスを空欄にする（全選択して削除した状態を再現）
+        app.sleep_var.set("abc")  # 就寝スピンボックスに非数値を入力した状態を再現する
+        app._on_range_change()  # FocusOut と同じ経路で設定反映処理を呼ぶ
+        self.assertEqual(app.prefs.wake, "07:30")  # 起床時刻は保存済みの値のまま破壊されない
+        self.assertEqual(app.prefs.sleep, "22:15")  # 就寝時刻も保存済みの値のまま破壊されない
+        self.assertEqual(app.wake_var.get(), "07")  # 入力欄には保存済みの「時」が書き戻される
+        self.assertEqual(app.sleep_var.get(), "22")  # 入力欄には保存済みの「時」が書き戻される
+
     def test_range_change_new_hour_persists(self):
         # 時が実際に変わったときは新しい「HH:00」で設定が更新されることを確認する
         app, _ = self._app(prefs=Prefs(wake="07:30", sleep="22:15"))  # 分単位の設定値でアプリを生成する
