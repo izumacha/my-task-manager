@@ -24,6 +24,11 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+          # cairosvg (ウィンドウアイコン表示用オプション依存) は requirements.txt に含まれない
+          # ため、この行で明示的にインストールし、全 OS/Python の組み合わせで cairosvg 自体が
+          # 問題なくインストールできることを CI で引き続き検証する（reminder/notifications.py
+          # の _set_window_icon() がオプション依存として扱うコードパスの回帰確認）。
+          pip install -e ".[icon]"
 
       - name: Run tests
         run: python -m pytest tests -v

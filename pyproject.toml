@@ -23,7 +23,13 @@ classifiers = [
   "Topic :: Office/Business :: Scheduling",
   "Topic :: Desktop Environment",
 ]
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+# ウィンドウアイコン（SVG→PNG 変換）専用のオプション依存。
+# 未インストールでも reminder/notifications.py の _set_window_icon() が
+# ImportError を捕捉してアイコン設定をスキップするだけで、アプリ本体は問題なく動作する。
+icon = [
   "cairosvg>=2.7.0",
 ]
 
@@ -37,4 +43,11 @@ reminder = "reminder:main"
 [build-system]
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# setuptools のフラットレイアウト自動検出は assets/ と contract/ もトップレベル
+# パッケージとみなして「複数パッケージを検出した」とビルドを拒否する（assets/contract は
+# コードではなくデータディレクトリで、実際に配布すべき Python パッケージは reminder/ のみ）。
+# 明示的に列挙することで pip install -e . / pipx install が失敗する問題を解消する。
+packages = ["reminder"]
 
