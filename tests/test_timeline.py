@@ -131,6 +131,22 @@ class BuildTimelineTests(unittest.TestCase):
         ]
         self.assertEqual(free_minutes_today(tasks, self.today, 7 * 60, 23 * 60, self.now), 900)
 
+    def test_free_minutes_counts_sub_minute_gaps(self):
+        # 1 分未満の隙間（秒付き due が作る 60 秒未満の空き）も合計に含まれること。
+        # タスク 00:00:20〜00:30:20（30 分）を窓 00:00〜01:00 に置くと、
+        # 空きは 20 秒 + 29 分 40 秒 = ちょうど 30 分。隙間の行を省略する実装だと
+        # 先頭 20 秒が失われて 29 分に過少計上されるため、ここで担保する。
+        tasks = [_t("秒付き", "2026-06-06T00:00:20", 30)]
+        self.assertEqual(free_minutes_today(tasks, self.today, 0, 60, self.now), 30)
+
+    def test_sub_minute_gap_emits_zero_minute_free_row(self):
+        # 60 秒未満の隙間でも ROW_FREE 行が出力されること（minutes は切り捨てで 0）。
+        tasks = [_t("秒付き", "2026-06-06T07:00:30", 30)]
+        rows = build_day_timeline(tasks, self.today, 7 * 60, 23 * 60, self.now)
+        self.assertEqual(rows[0].kind, ROW_FREE)
+        self.assertEqual(rows[0].minutes, 0)
+        self.assertEqual((rows[0].end - rows[0].start).total_seconds(), 30)
+
     def test_free_minutes_excludes_off_hours(self):
         # 就寝 23:00 の後（23:15）にタスクがあっても、窓外（23:00〜23:15）は
         # 空きに数えない。空きは 07:00〜23:00 = 960 分のみ。
