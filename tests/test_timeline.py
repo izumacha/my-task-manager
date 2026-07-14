@@ -147,6 +147,16 @@ class BuildTimelineTests(unittest.TestCase):
         self.assertEqual(rows[0].minutes, 0)
         self.assertEqual((rows[0].end - rows[0].start).total_seconds(), 30)
 
+    def test_sub_minute_tail_gap_emits_zero_minute_free_row(self):
+        # 末尾（最終タスク後〜就寝）の 60 秒未満の隙間でも ROW_FREE 行が出力されること。
+        # 22:59:30 開始の 30 秒…は duration が分単位なので、22:29:30 開始 30 分
+        # （22:59:30 終了）で就寝 23:00 まで残り 30 秒の末尾隙間を作る。
+        tasks = [_t("秒付き末尾", "2026-06-06T22:29:30", 30)]
+        rows = build_day_timeline(tasks, self.today, 7 * 60, 23 * 60, self.now)
+        self.assertEqual(rows[-1].kind, ROW_FREE)
+        self.assertEqual(rows[-1].minutes, 0)
+        self.assertEqual((rows[-1].end - rows[-1].start).total_seconds(), 30)
+
     def test_free_minutes_excludes_off_hours(self):
         # 就寝 23:00 の後（23:15）にタスクがあっても、窓外（23:00〜23:15）は
         # 空きに数えない。空きは 07:00〜23:00 = 960 分のみ。
