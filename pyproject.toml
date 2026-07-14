@@ -23,7 +23,13 @@ classifiers = [
   "Topic :: Office/Business :: Scheduling",
   "Topic :: Desktop Environment",
 ]
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+# ウィンドウアイコン（SVG→PNG 変換）専用のオプション依存。
+# 未インストールでも reminder/notifications.py の _set_window_icon() が
+# ImportError を捕捉してアイコン設定をスキップするだけで、アプリ本体は問題なく動作する。
+icon = [
   "cairosvg>=2.7.0",
 ]
 

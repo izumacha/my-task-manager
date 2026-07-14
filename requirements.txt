@@ -1,1 +1,6 @@
-cairosvg>=2.7.0
+# reminder は標準ライブラリ（tkinter 含む）のみで動作し、必須の実行時依存はない。
+# ウィンドウアイコン表示（SVG→PNG 変換）を有効にしたい場合のみ、以下のいずれかで
+# cairosvg をインストールする（未インストールでもアプリは正常に動作し、アイコン設定だけを
+# graceful にスキップする。reminder/notifications.py の _set_window_icon() 参照）。
+#   pip install -e ".[icon]"
+#   pip install cairosvg>=2.7.0

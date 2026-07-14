@@ -33,14 +33,14 @@ Python 3.10 以上が必要です。tkinter は標準ライブラリのため、
 git clone https://github.com/izumacha/my-task-manager.git
 cd my-task-manager
 
-# 2. 依存パッケージをインストール（ウィンドウアイコン表示用の cairosvg のみ）
-pip install -r requirements.txt
+# 2. （任意）ウィンドウアイコン表示用の cairosvg をインストール
+pip install -e ".[icon]"
 
 # 3. 起動
 python -m reminder
 ```
 
-> **アイコンが無くてもOK**: `cairosvg` はウィンドウアイコン表示に使うだけのオプション依存です。入っていなくてもアプリは問題なく動きます。
+> **アイコンが無くてもOK**: `cairosvg` はウィンドウアイコン表示に使うだけのオプション依存で、必須の実行時依存ではありません。手順 2 を省略してもアプリは問題なく動きます。
 
 ### pipx でコマンドとしてインストール（任意）
 
@@ -223,7 +223,7 @@ my-task-manager/
 │   ├── time_utils.py           # 開始までの遅延計算・定数
 │   └── theme.py                # デザイントークン（配色・フォント・余白）の一元定義
 ├── install_reminder_app.sh     # Linux 向けデスクトップエントリ生成スクリプト
-├── requirements.txt            # 実行用依存（cairosvg）
+├── requirements.txt            # 実行用依存（必須なし。cairosvg はオプション、pyproject.toml の [icon] extra 参照）
 ├── requirements-dev.txt        # 開発・テスト用依存（pytest）
 ├── pyproject.toml              # パッケージ定義・console-scripts
 ├── assets/
