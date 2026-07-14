@@ -32,7 +32,6 @@ from .timeline import (
     suggest_for_free_time,
 )
 from .time_utils import (
-    STATUS_EMPTY,
     STATUS_IDLE,
     delay_ms_until,
 )
@@ -80,6 +79,5 @@ __all__ = [
     "MIN_INTERVAL",
     "MAX_INTERVAL",
     "STATUS_IDLE",
-    "STATUS_EMPTY",
     "_set_window_icon",
 ]
