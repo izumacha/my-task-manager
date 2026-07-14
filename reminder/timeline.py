@@ -61,6 +61,8 @@ class TimelineRow:
 
     kind が ROW_TASK ならタスク行（task / status が有効）、
     ROW_FREE なら空き時間行（minutes が有効）。start/end は両者共通。
+    minutes は表示用に分へ切り捨てた値で、1 分未満の空き行では 0 になる
+    （正確な長さが必要な集計は start/end から秒単位で計算する）。
     """
 
     kind: str
@@ -148,19 +150,28 @@ def build_day_timeline(
     cursor = start_bound  # 行の追加位置（現在位置）を表示開始日時で初期化する
     for task in todays:  # 開始順に並んだ各タスクについてループする
         start, end = task.due_dt, task.end_dt  # タスクの開始・終了日時を取り出す
-        gap = int((start - cursor).total_seconds() // 60)  # cursor からタスク開始までの空き時間（分）を計算する
-        if gap > 0:  # 空き時間が 1 分以上ある場合
-            rows.append(TimelineRow(ROW_FREE, cursor, start, gap))  # 空き時間行を追加する
+        _append_free_row(rows, cursor, start)  # cursor からタスク開始までの空き時間行を（あれば）追加する
         rows.append(TimelineRow(ROW_TASK, start, end, task.duration_min,
                                 task=task, status=_task_status(task, now)))  # タスク行を追加する
         if end > cursor:  # タスクの終了がカーソルより後ろの場合
             cursor = end  # カーソルをタスクの終了日時に進める
 
-    # 最後のタスク以降、就寝（または最終タスク終了）までの空き時間
-    tail = int((end_bound - cursor).total_seconds() // 60)  # 最終タスク後から表示終了までの残り時間（分）を計算する
-    if tail > 0:  # 残り時間が 1 分以上ある場合
-        rows.append(TimelineRow(ROW_FREE, cursor, end_bound, tail))  # 末尾の空き時間行を追加する
+    # 最後のタスク以降、就寝（または最終タスク終了）までの空き時間行を（あれば）追加する
+    _append_free_row(rows, cursor, end_bound)
     return rows  # 完成したタイムライン行のリストを返す
+
+
+def _append_free_row(
+    rows: list[TimelineRow], start: datetime.datetime, end: datetime.datetime
+) -> None:
+    """[start, end) に正の長さがあれば ROW_FREE 行を rows に追加する。
+
+    1 分未満の隙間でも行を必ず出す（minutes は表示用に切り捨てるので 0 になり得る）。
+    行を省略すると free_minutes_today がその秒数を合計できず過少計上になるため。
+    """
+    gap_seconds = (end - start).total_seconds()  # 空き時間の長さ（秒）を計算する
+    if gap_seconds > 0:  # 空き時間が 1 秒でもある場合
+        rows.append(TimelineRow(ROW_FREE, start, end, int(gap_seconds // 60)))  # 空き時間行を追加する
 
 
 def free_minutes_today(
