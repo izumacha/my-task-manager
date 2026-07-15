@@ -193,6 +193,23 @@ class AddToTimelineTests(AppTestCase):
         # 固定時刻 12:00 から見て 10:00 は過去なので翌日 6/2 に繰り上がる
         self.assertEqual(app.tasks[0].due_dt, datetime.datetime(2026, 6, 2, 10, 0))
 
+    def test_status_message_includes_date_when_same_time_rolls_to_next_day(self):
+        # test_equal_time_rolls_to_next_day と同じ状況(今の時:分を選んだが秒未満の
+        # 差で「過去」判定され翌日へ繰り上がる)を再現する。このとき確認メッセージが
+        # HH:MM だけだと、実際は翌日に追加されたことが利用者に伝わらず、今日のカレンダー
+        # に表示されないタスクを「追加した」と誤解させてしまう(回帰防止)
+        app, _ = self._app()
+        fixed = datetime.datetime(2026, 6, 1, 9, 0, 30)  # 9:00 から 30 秒経過した時刻
+        app._get_now = lambda: fixed
+        app.title_var.set("掃除")
+        app.hour_var.set("09")
+        app.minute_var.set("00")
+        app.add_to_timeline()
+        # 実際には翌日(6/2)の 9:00 に繰り上がっている
+        self.assertEqual(app.tasks[0].due_dt, datetime.datetime(2026, 6, 2, 9, 0))
+        # メッセージにも日付(06/02)が含まれ、今日ではないことが分かるようになっている
+        self.assertIn("06/02 09:00", app.status_var.get())
+
 
 class AddToBacklogTests(AppTestCase):
     def test_adds_backlog_task(self):
@@ -317,6 +334,23 @@ class MoveTests(AppTestCase):
         # 入力時刻を保持し、過去なら翌日へ繰り上がって未来になる
         self.assertEqual((task.due_dt.hour, task.due_dt.minute), (10, 30))
         self.assertGreaterEqual(task.due_dt, datetime.datetime.now() - datetime.timedelta(seconds=5))
+
+    def test_status_message_includes_date_when_same_time_rolls_to_next_day(self):
+        # add_to_timeline と同じ回帰防止(§ test_equal_time_rolls_to_next_day の状況):
+        # 今の時:分を選ぶと秒未満の差で翌日へ繰り上がるため、確認メッセージにも
+        # 日付を含めないと今日予定されたと誤解される
+        task = Task(title="x", due="")
+        app, _ = self._app([task])
+        app.backlog_tree.selection.return_value = (task.id,)
+        fixed = datetime.datetime(2026, 6, 1, 9, 0, 30)  # 9:00 から 30 秒経過した時刻
+        app._get_now = lambda: fixed
+        app.hour_var.set("09")
+        app.minute_var.set("00")
+        app.schedule_backlog_selected()
+        # 実際には翌日(6/2)の 9:00 に繰り上がっている
+        self.assertEqual(task.due_dt, datetime.datetime(2026, 6, 2, 9, 0))
+        # メッセージにも日付(06/02)が含まれる
+        self.assertIn("06/02 09:00", app.status_var.get())
 
 
 class ScheduleTaskTests(AppTestCase):
