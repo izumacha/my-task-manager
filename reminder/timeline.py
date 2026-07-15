@@ -143,8 +143,8 @@ def build_day_timeline(
         (t for t in tasks
          if t.is_scheduled and (
              planner_day(t.due_dt, wake_min, sleep_min) == date  # このプランナー日に属するタスク
-             or (planner_day(t.due_dt, wake_min, sleep_min) == prev_date
-                 and t.end_dt > day_start)  # 前日開始で当日の起床後まで続いているタスク
+             or (planner_day(t.due_dt, wake_min, sleep_min) == prev_date  # 前のプランナー日に属し
+                 and t.end_dt > day_start)  # かつ終了が当日の起床時刻より後（日をまたいで継続中）のタスク
          )),
         key=lambda t: t.due_dt,  # 開始日時の昇順に並べる
     )
