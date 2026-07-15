@@ -486,6 +486,29 @@ class CalendarRenderTests(AppTestCase):
         y_overlap = y0_a < y1_b and y0_b < y1_a  # 2 つのカードの y 範囲が重なっているか判定する
         self.assertFalse(x_overlap and y_overlap)  # x も y も重なる（＝カード同士が重なって見える）状態にはならない
 
+    def test_long_early_task_extends_grid_past_shorter_later_task(self):
+        # 表示ウィンドウ終端は「rows の全行中の最大終了時刻」から決める必要がある。
+        # 先に始まって遅くまで続く長いタスク（B）の後に、後から始まって早く終わる
+        # 短いタスク（A）が来ると、B の行が rows の末尾ではなくなる。
+        # window_end を rows[-1].end のような「末尾行だけ」から取ると、この場合に
+        # B の実際の終了時刻より手前で罫線が止まってしまう回帰を防ぐ。
+        # 既定の就寝時刻(23:00)を超えて続く B を使い、trailing free row が
+        # 追加されない（cursor が end_bound に一致してしまう）条件を再現する。
+        # これにより rows の末尾行が B ではなく A になり、rows[-1].end だけを見ると
+        # 誤って A の終了時刻(09:30)を window_end としてしまう。
+        today = datetime.date.today()
+        start_b = datetime.datetime.combine(today, datetime.time(8, 0))
+        start_a = datetime.datetime.combine(today, datetime.time(9, 0))
+        task_b = Task(title="長時間タスク", due=_iso(start_b), duration_min=15 * 60 + 30)  # 08:00 - 23:30
+        task_a = Task(title="短時間タスク", due=_iso(start_a), duration_min=30)  # 09:00 - 09:30（B に内包される）
+        app, _ = self._app([task_b, task_a])
+        app._render_timeline(today)
+        texts = [c.kwargs.get("text") for c in app.timeline_tree.create_text.call_args_list]
+        # B の終了(23:30)を跨ぐ正時(23:00)の罫線ラベルが描かれているはず。
+        # window_end が誤って task_a の終了(09:30)相当に縮んでいると、これより
+        # 後の正時ラベルは一切描かれない。
+        self.assertIn("23:00", texts)
+
     def test_grid_labels_respect_minute_offset(self):
         # 起床が 07:30（非正時）でも罫線ラベルは実際の正時（08:00〜）になる
         today = datetime.date.today()

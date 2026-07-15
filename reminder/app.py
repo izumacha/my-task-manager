@@ -671,11 +671,14 @@ class PlannerApp:
         task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]  # タスク行だけを抜き出す
 
         # 表示ウィンドウ（起床前/就寝後に始まる・終わるタスクも可視範囲に含めた範囲）は
-        # build_day_timeline 側で計算済みで、rows の先頭行の開始・末尾行の終了と必ず一致する
-        # （行は時刻順に隙間なく並び、_append_free_row は正の長さの隙間だけを行にするため）。
-        # ここで同じ min/max を再計算せず rows の端から読み取ることで、二重計算によるズレを防ぐ。
-        window_start = rows[0].start  # 表示ウィンドウの開始時刻（先頭行の開始）
-        window_end = rows[-1].end  # 表示ウィンドウの終了時刻（末尾行の終了）
+        # build_day_timeline 側で既に計算済みなので、day_start/day_end や個々のタスクから
+        # 同じ min/max を再計算せず rows から読み取る。
+        # 注意: rows はタスクの開始時刻順に並ぶため、末尾行が必ずしも最も遅く終わる行とは
+        # 限らない（後から始まって先に終わる短いタスクが、先に始まって後まで続く長いタスクより
+        # 後ろの行になり得る）。そのため rows[-1].end ではなく全行の max を取る必要がある
+        # （min 側は開始時刻順に並ぶことから rows[0].start で安全だが、対称性のため同じ書き方に揃える）。
+        window_start = min(r.start for r in rows)  # 表示ウィンドウの開始時刻(全行中の最小開始)
+        window_end = max(r.end for r in rows)  # 表示ウィンドウの終了時刻(全行中の最大終了)
 
         scale = theme.HOUR_HEIGHT / 60.0  # 1 分あたりのピクセル数を計算する
 
