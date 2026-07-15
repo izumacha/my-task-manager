@@ -51,14 +51,28 @@ class PlayNotificationSoundTests(unittest.TestCase):
         play_notification_sound(root)
         root.bell.assert_called_once_with()
 
+    @patch("reminder.notifications.subprocess.Popen")
     @patch("reminder.notifications.threading.Thread")
     @patch("reminder.notifications.platform.system", return_value="Darwin")
-    def test_plays_afplay_on_darwin(self, _mock_system, mock_thread_cls):
+    def test_plays_afplay_on_darwin(self, _mock_system, mock_thread_cls, _mock_popen):
         root = Mock()
         play_notification_sound(root)
         mock_thread_cls.assert_called_once()
         mock_thread_cls.return_value.start.assert_called_once()
         root.bell.assert_not_called()
+
+    @patch("reminder.notifications.subprocess.Popen", side_effect=FileNotFoundError("no afplay"))
+    @patch("reminder.notifications.platform.system", return_value="Darwin")
+    def test_missing_afplay_still_rings_bell(self, _mock_system, _mock_popen):
+        # 回帰テスト: 以前は afplay の起動失敗(FileNotFoundError)がバックグラウンド
+        # スレッド内でログにだけ残されて握り潰され、play_notification_sound() の
+        # try/except には一切伝わらなかったため、Windows/Linux と異なり macOS だけ
+        # bell へのフォールバックが起きなかった。今は Popen をこの呼び出し元スレッドで
+        # 同期的に呼ぶため、起動失敗が play_notification_sound() の try/except まで
+        # 伝播し、他プラットフォームと同様に bell へフォールバックする。
+        root = Mock()
+        play_notification_sound(root)
+        root.bell.assert_called_once_with()
 
     @patch("reminder.notifications._play_windows_sound", side_effect=ImportError("no winsound"))
     @patch("reminder.notifications.platform.system", return_value="Windows")
@@ -154,28 +168,40 @@ class RingBellTests(unittest.TestCase):
 
 
 class PlayMacosSoundTests(unittest.TestCase):
+    @patch("reminder.notifications.subprocess.Popen")
     @patch("reminder.notifications.threading.Thread")
-    def test_starts_daemon_thread(self, mock_thread_cls):
+    def test_starts_daemon_thread(self, mock_thread_cls, _mock_popen):
         _play_macos_sound()
         mock_thread_cls.assert_called_once()
         self.assertTrue(mock_thread_cls.call_args.kwargs.get("daemon"))
         mock_thread_cls.return_value.start.assert_called_once()
 
-    @patch("reminder.notifications.logging.debug")
     @patch("reminder.notifications.subprocess.Popen", side_effect=FileNotFoundError("no afplay"))
-    @patch("reminder.notifications.threading.Thread")
-    def test_missing_afplay_is_logged_not_raised(self, mock_thread_cls, _mock_popen, mock_debug):
+    def test_missing_afplay_propagates_to_caller(self, _mock_popen):
+        # Popen(起動)自体はこのメソッドの呼び出し元スレッドで同期的に行うため、
+        # 起動失敗はここで(スレッド内に隠れず)例外として呼び出し元へ伝播しなければならない。
+        # play_notification_sound() 側の try/except がこれを捕捉して bell へ
+        # フォールバックできるようにするための契約(test_missing_afplay_still_rings_bell 参照)。
+        with self.assertRaises(FileNotFoundError):
+            _play_macos_sound()
+
+    @patch("reminder.notifications.logging.debug")
+    @patch("reminder.notifications.subprocess.Popen")
+    def test_reap_failure_is_logged_not_raised(self, mock_popen, mock_debug):
+        # 起動(Popen)には成功したが、再生完了を待つ(reap する)別スレッド内で
+        # wait() が失敗するまれなケースでも、例外を外へ伝播させずログに残すことを検証する。
         # threading.Thread を、start() 呼び出し時にターゲット関数をその場（同一スレッド）で
-        # 実行するフェイクに差し替える。実スレッドを起こして sleep で完了を待つ書き方は
-        # タイミング依存で不安定になるため避け、Popen 失敗時にスレッド内の例外が
-        # 外へ伝播せずログに残ることを決定的に検証する。
+        # 実行するフェイクに差し替える（実スレッド+sleep 待ちはタイミング依存で不安定なため避ける）。
         def _run_target_on_start(target=None, daemon=None):
             thread = Mock()  # 実スレッドの代わりに使う Mock オブジェクトを作る
             thread.start.side_effect = target  # start() 呼び出しでターゲットをその場実行する
             return thread  # フェイクのスレッドオブジェクトを返す
 
-        mock_thread_cls.side_effect = _run_target_on_start  # threading.Thread(...) の呼び出しをこのフェイクに差し替える
-        _play_macos_sound()  # 例外が外へ伝播していればこの呼び出し自体が失敗する
+        mock_proc = Mock()  # Popen が返す偽のプロセスオブジェクト
+        mock_proc.wait.side_effect = OSError("reap failed")  # wait() が失敗するケースを模す
+        mock_popen.return_value = mock_proc
+        with patch("reminder.notifications.threading.Thread", side_effect=_run_target_on_start):
+            _play_macos_sound()  # 例外が外へ伝播していればこの呼び出し自体が失敗する
         mock_debug.assert_called_once()  # 失敗がデバッグログに記録されている
 
 

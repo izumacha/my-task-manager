@@ -30,24 +30,35 @@ def _set_window_icon(root: tk.Tk) -> None:
 
 
 def _play_macos_sound() -> None:
-    """macOS: afplay で Glass.aiff を別スレッド再生する（UI スレッドをブロックしない）。"""
-    def _play_and_wait() -> None:
-        try:
-            proc = subprocess.Popen(
-                ["/usr/bin/afplay", "/System/Library/Sounds/Glass.aiff"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )  # afplay コマンドをサブプロセスとして起動し、出力を捨てる
-            proc.wait()  # 再生が終わるまでサブスレッド内で待機する
-        except Exception as e:  # afplay が存在しない等の失敗をこのスレッド内で捕捉する
-            # ここで捕まえないと、play_notification_sound() 側の try/except は
-            # 既にスレッド起動を終えて抜けた後なので例外を捕捉できず、素の
-            # traceback が stderr に出るだけでログに何も残らない
-            # （§6: エラーを握り潰さない）。tkinter はスレッドセーフでないため
-            # このバックグラウンドスレッドから root.bell() は呼ばず、ログ記録に留める。
-            logging.debug("afplay の再生に失敗しました: %s", e)  # デバッグログに失敗理由を記録する
+    """macOS: afplay で Glass.aiff を再生する。
 
-    threading.Thread(target=_play_and_wait, daemon=True).start()  # 再生処理をデーモンスレッドで開始してUIスレッドをブロックしない
+    起動失敗時にフォールバック(bell)へ確実に落とすため、Popen 自体は
+    呼び出し元のスレッド(=このメソッドの呼び出し元)で同期的に行い、
+    起動失敗の例外(例: afplay が存在しない場合の FileNotFoundError)を
+    呼び出し元へ伝播させる。再生完了を待つ(reap する)部分だけを別スレッドに
+    任せ、UI スレッドをブロックしない(_send_linux_notification の
+    reap パターンと同じ構造)。
+    """
+    proc = subprocess.Popen(
+        ["/usr/bin/afplay", "/System/Library/Sounds/Glass.aiff"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )  # afplay コマンドをサブプロセスとして起動する(失敗すれば例外がここで呼び出し元へ飛ぶ)
+
+    def _reap() -> None:
+        # 起動済みプロセスの終了を別スレッドで待ち受けて回収(reap)する。
+        # wait() を呼ばないまま放置すると、プロセスは終了しても OS の
+        # プロセステーブルにゾンビとして残り続ける。
+        try:
+            proc.wait()  # 再生が終わるまで待って回収する
+        except Exception as e:  # wait() 自体が失敗するまれなケースを捕捉する
+            # ここで捕まえないと、この関数はスレッド起動を終えて抜けた後なので
+            # 例外を捕捉できず、素の traceback が stderr に出るだけでログに何も
+            # 残らない（§6: エラーを握り潰さない）。tkinter はスレッドセーフでないため
+            # このバックグラウンドスレッドから root.bell() は呼ばず、ログ記録に留める。
+            logging.debug("afplay プロセスの回収に失敗しました: %s", e)  # デバッグログに失敗理由を記録する
+
+    threading.Thread(target=_reap, daemon=True).start()  # 終了待ちをデーモンスレッドに任せてUIスレッドをブロックしない
 
 
 def _play_windows_sound() -> None:
