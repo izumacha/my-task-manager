@@ -489,7 +489,13 @@ class PlannerApp:
         self._refresh()  # タイムラインと統計を再描画する
         self._schedule_task(task)  # 開始時刻に通知するジョブを登録する
         self.title_var.set("")  # タスク名入力欄を空にリセットする
-        self.status_var.set(f"「{title}」を {start.hour:02d}:{start.minute:02d} に追加しました。")  # 追加完了メッセージをステータスバーに表示する
+        # make_due は現在時刻と同分でも翌日へ繰り上げるため(秒未満の差で「過去」判定される)、
+        # 開始日が今日でなければメッセージにも日付を含め、翌日に繰り越されたことを利用者に明示する。
+        # 日付を出さないと HH:MM だけでは「今日追加された」と誤解されてしまう
+        if task.due_dt.date() != self._get_now().date():  # 実際の開始日が今日でない場合
+            self.status_var.set(f"「{title}」を {task.due_dt:%m/%d %H:%M} に追加しました。")  # 日付付きで表示する
+        else:
+            self.status_var.set(f"「{title}」を {start.hour:02d}:{start.minute:02d} に追加しました。")  # 追加完了メッセージをステータスバーに表示する
         logging.info("タイムラインに追加: %s（%s, %d分）", title, due, duration)  # 追加内容をログに記録する
 
     def add_to_backlog(self) -> None:
@@ -623,7 +629,12 @@ class PlannerApp:
         self._persist_tasks()  # 更新したタスクリストをファイルに保存する
         self._refresh()  # タイムライン・バックログ・統計を再描画する
         self._schedule_task(task)  # 開始時刻に通知するジョブを登録する
-        self.status_var.set(f"「{task.title}」を {start.hour:02d}:{start.minute:02d} に予定しました。")  # 予定設定完了メッセージをステータスバーに表示する
+        # make_due は現在時刻と同分でも翌日へ繰り上げるため(秒未満の差で「過去」判定される)、
+        # 開始日が今日でなければメッセージにも日付を含め、翌日に繰り越されたことを利用者に明示する
+        if task.due_dt.date() != self._get_now().date():  # 実際の開始日が今日でない場合
+            self.status_var.set(f"「{task.title}」を {task.due_dt:%m/%d %H:%M} に予定しました。")  # 日付付きで表示する
+        else:
+            self.status_var.set(f"「{task.title}」を {start.hour:02d}:{start.minute:02d} に予定しました。")  # 予定設定完了メッセージをステータスバーに表示する
 
     # ------------------------------------------------------------ 表示
 
