@@ -54,7 +54,6 @@ from .timeline import (
     STATUS_PAST,
     build_day_timeline,
     carry_over_overdue,
-    day_bounds,
     format_duration,
     free_minutes_today,
     hhmm_to_min,
@@ -667,17 +666,16 @@ class PlannerApp:
         self._tl_blocks = []  # ブロックのクリック判定情報リストをリセットする
         wake_min, sleep_min = self._wake_min(), self._sleep_min()  # 起床・就寝時刻を「分」で取得する
         now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（_refresh からは同一時刻が渡される）
-        # 論理的な 1 日の範囲（夜間レンジの翌日跨ぎ込み）は build_day_timeline と
-        # 同じ day_bounds を使い、窓の算出元を一本化する（ズレ防止）。
-        day_start, day_end = day_bounds(today, wake_min, sleep_min)  # 今日の起床〜就寝の時刻範囲を取得する
 
         rows = build_day_timeline(self.tasks, today, wake_min, sleep_min, now)  # 今日のタイムライン行データを構築する
         task_rows = [r for r in rows if r.kind == ROW_TASK and r.task is not None]  # タスク行だけを抜き出す
 
-        # 起床前/就寝後に始まる・終わるタスクも必ず可視範囲に含める。
-        # （設定変更や時間外スケジュールでブロックが見切れて操作不能になるのを防ぐ。）
-        window_start = min([day_start] + [r.start for r in task_rows])  # 表示ウィンドウの開始時刻（タスク開始と起床時刻の早い方）を決める
-        window_end = max([day_end] + [r.end for r in task_rows])  # 表示ウィンドウの終了時刻（タスク終了と就寝時刻の遅い方）を決める
+        # 表示ウィンドウ（起床前/就寝後に始まる・終わるタスクも可視範囲に含めた範囲）は
+        # build_day_timeline 側で計算済みで、rows の先頭行の開始・末尾行の終了と必ず一致する
+        # （行は時刻順に隙間なく並び、_append_free_row は正の長さの隙間だけを行にするため）。
+        # ここで同じ min/max を再計算せず rows の端から読み取ることで、二重計算によるズレを防ぐ。
+        window_start = rows[0].start  # 表示ウィンドウの開始時刻（先頭行の開始）
+        window_end = rows[-1].end  # 表示ウィンドウの終了時刻（末尾行の終了）
 
         scale = theme.HOUR_HEIGHT / 60.0  # 1 分あたりのピクセル数を計算する
 
