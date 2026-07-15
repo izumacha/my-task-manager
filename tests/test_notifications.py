@@ -138,7 +138,7 @@ class SendLinuxNotificationTests(unittest.TestCase):
     @patch("reminder.notifications.logging.debug")
     @patch("reminder.notifications.subprocess.Popen")
     def test_reap_failure_is_logged_not_raised(self, mock_popen, mock_debug):
-        # _play_macos_sound の _play_and_wait と同様、wait() 自体が失敗する
+        # _play_macos_sound の _reap と同様、wait() 自体が失敗する
         # まれなケースでも例外を外へ伝播させずログに残すことを検証する。
         # threading.Thread を、start() 呼び出し時にターゲット関数をその場（同一スレッド）で
         # 実行するフェイクに差し替える（実スレッド+sleep 待ちはタイミング依存で不安定なため避ける）。

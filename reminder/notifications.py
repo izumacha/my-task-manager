@@ -98,7 +98,7 @@ def _send_linux_notification(body: str = "") -> None:
             except Exception as e:  # wait() 自体が失敗するまれなケースを捕捉する
                 # ここで捕まえないと、この関数はスレッド起動を終えて抜けた後なので
                 # 例外を捕捉できず、素の traceback が stderr に出るだけでログに何も
-                # 残らない（_play_macos_sound の _play_and_wait と同じ理由。§6 エラーを
+                # 残らない（_play_macos_sound の _reap と同じ理由。§6 エラーを
                 # 握り潰さない）。tkinter はスレッドセーフでないため root.bell() は呼ばない。
                 logging.debug("notify-send プロセスの回収に失敗しました: %s", e)  # デバッグログに失敗理由を記録する
 
@@ -121,7 +121,7 @@ def play_notification_sound(root: tk.Tk, body: str = "") -> None:
     """通知音を再生する。
 
     プラットフォームごとに最適な方法を試み、失敗時は tkinter の bell() にフォールバックする。
-    - macOS: afplay コマンドで Glass.aiff を再生（別スレッド）
+    - macOS: afplay コマンドで Glass.aiff を再生（完了待ちのみ別スレッド）
     - Windows: winsound.MessageBeep で警告音を再生
     - Linux: notify-send でデスクトップ通知を送信し、加えて bell を鳴らす
     - その他 / 上記失敗時: root.bell()
