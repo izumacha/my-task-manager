@@ -170,6 +170,27 @@ class BuildTimelineTests(unittest.TestCase):
         titles = [r.task.title for r in rows if r.kind == ROW_TASK]
         self.assertIn("夜更かし作業", titles)
 
+    def test_multi_day_spanning_task_shows_on_next_day(self):
+        # 前日 22:00 開始・600分（翌 08:00 終了）の日をまたぐタスクは、
+        # 翌日のタイムラインにも表示されなければならない（回帰テスト）。
+        # これを含めないと、まだ進行中の時間帯が翌日の空きとして扱われてしまう。
+        next_day = datetime.date(2026, 6, 7)
+        now = datetime.datetime(2026, 6, 7, 7, 30)
+        tasks = [_t("夜通し作業", "2026-06-06T22:00:00", 600)]  # 22:00-翌08:00
+        rows = build_day_timeline(tasks, next_day, 7 * 60, 23 * 60, now)
+        titles = [r.task.title for r in rows if r.kind == ROW_TASK]
+        self.assertIn("夜通し作業", titles)
+
+    def test_multi_day_spanning_task_not_double_counted_as_free(self):
+        # 前日 22:00 開始・600分（翌 08:00 終了）の日をまたぐタスクがある場合、
+        # 翌日 07:00-08:00 は空きとして数えてはいけない（過大計上の回帰テスト）。
+        next_day = datetime.date(2026, 6, 7)
+        now = datetime.datetime(2026, 6, 7, 7, 0)
+        tasks = [_t("夜通し作業", "2026-06-06T22:00:00", 600)]  # 22:00-翌08:00
+        # 窓 07:00-23:00 = 960分のうち 07:00-08:00 の60分はタスクで占有されている
+        self.assertEqual(free_minutes_today(tasks, next_day, 7 * 60, 23 * 60, now), 900)
+        self.assertEqual(max_free_slot(tasks, next_day, 7 * 60, 23 * 60, now), 900)
+
 
 class PlannerDayTests(unittest.TestCase):
     def test_normal_range_uses_calendar_date(self):

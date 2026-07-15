@@ -134,11 +134,18 @@ def build_day_timeline(
     """
     now = now or datetime.datetime.now()  # now が None の場合は現在時刻を使う
     day_start, day_end = day_bounds(date, wake_min, sleep_min)  # 指定日の起床・就寝日時を取得する
-    # そのプランナー日に属するタスクを抽出（夜間レンジの翌 00:30 等も
-    # planner_day により前日側に正しく割り当てられる）。
+    prev_date = date - datetime.timedelta(days=1)  # 前のプランナー日（日をまたいで続くタスクの判定用）
+    # そのプランナー日に属するタスクに加え、前のプランナー日に属していても
+    # 終了が当日の起床時刻より後（＝日をまたいで今も続いている）タスクを含める。
+    # これを含めないと、日またぎタスクが翌日の空き時間計算から完全に抜け落ち、
+    # 実際は占有中の時間帯を「空き」として過大計上してしまう。
     todays = sorted(
         (t for t in tasks
-         if t.is_scheduled and planner_day(t.due_dt, wake_min, sleep_min) == date),  # このプランナー日に属するスケジュール済みタスクだけ残す
+         if t.is_scheduled and (
+             planner_day(t.due_dt, wake_min, sleep_min) == date  # このプランナー日に属するタスク
+             or (planner_day(t.due_dt, wake_min, sleep_min) == prev_date  # 前のプランナー日に属し
+                 and t.end_dt > day_start)  # かつ終了が当日の起床時刻より後（日をまたいで継続中）のタスク
+         )),
         key=lambda t: t.due_dt,  # 開始日時の昇順に並べる
     )
     # 表示窓は基本 [day_start, day_end) だが、起床前・就寝後など範囲外に
