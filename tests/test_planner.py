@@ -518,10 +518,22 @@ class CalendarRenderTests(AppTestCase):
         app._tl_width = 460  # 既定の Canvas 幅で検証する（極端な最小幅ではない現実的な条件）
         app._render_timeline(today)
         self.assertEqual(len(app._tl_blocks), len(tasks))  # 全タスクが描画される（欠落しない）
-        for x0, _y0, x1, _y1, cb_box, _tid, _done in app._tl_blocks:  # 各ブロックとそのチェックボックス領域を検査する
+        block_x1 = {}  # task.id → ブロック右端(x1) の対応表（後段のテキスト位置検証で使う）
+        for x0, _y0, x1, _y1, cb_box, tid, _done in app._tl_blocks:  # 各ブロックとそのチェックボックス領域を検査する
             cb_left, _cb_top, cb_right, _cb_bottom = cb_box  # チェックボックスの判定領域の左右端を取り出す
             self.assertGreaterEqual(cb_left, x0 - 1e-6)  # チェックボックスがブロック左端より内側にあること
             self.assertLessEqual(cb_right, x1 + 1e-6)  # チェックボックスがブロック右端を超えて隣のレーンへはみ出さないこと
+            block_x1[tid] = x1  # 後段でタイトル文字の描画開始位置と突き合わせるため記録する
+        # チェックボックス位置をクランプしても、そこからさらに右へオフセットした
+        # タイトル／時刻テキストの描画開始 x が自ブロックの右端(x1)を超えて隣の
+        # レーン(隣のタスクのカード)へはみ出して表示されないことも確認する
+        # （cb_cx だけクランプして text_x をクランプし忘れる回帰の防止）。
+        for call in app.timeline_tree.create_text.call_args_list:  # Canvas に発行された全 create_text 呼び出しをループする
+            tags = call.kwargs.get("tags")  # このテキストがどのタスクに属するかのタグを取り出す
+            if not tags or tags[0] != "task" or tags[1] not in block_x1:  # タスク用テキスト（時刻グリッドのラベル等を除く）でなければ
+                continue  # 対象外なのでスキップする
+            text_x_used = call.args[0]  # create_text に渡された描画開始 x 座標を取り出す
+            self.assertLessEqual(text_x_used, block_x1[tags[1]] + 1e-6)  # 自ブロックの右端を超えて隣のレーンへはみ出さないこと
 
     def test_short_consecutive_tasks_do_not_visually_overlap(self):
         # 所要時間が短いタスク（描画時に theme.CAL_MIN_BLOCK_HEIGHT へクランプされる）が
