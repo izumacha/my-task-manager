@@ -42,7 +42,9 @@ def _coerce_interval(value: object) -> int:
     """繰り返し間隔を [MIN_INTERVAL, MAX_INTERVAL] の整数にクランプする。"""
     try:
         n = int(value)  # type: ignore[arg-type]  # 任意の型を整数に変換する（文字列や float も対応）
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # float('inf')/float('-inf') は int() が TypeError/ValueError ではなく
+        # OverflowError を送出するため、他の変換不能値と同様にここで捕捉する
         return MIN_INTERVAL  # 変換できない値（None・空文字など）は最小値 1 を返す
     return max(MIN_INTERVAL, min(MAX_INTERVAL, n))  # 1〜99 の範囲に収まるようクランプして返す
 
@@ -51,7 +53,9 @@ def _coerce_duration(value: object) -> int:
     """所要時間（分）を [MIN_DURATION, MAX_DURATION] の整数にクランプする。"""
     try:
         n = int(value)  # type: ignore[arg-type]  # 任意の型を整数（分数）に変換する
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # float('inf')/float('-inf') は int() が TypeError/ValueError ではなく
+        # OverflowError を送出するため、他の変換不能値と同様にここで捕捉する
         return DEFAULT_DURATION  # 変換できない値は既定の所要時間 30 分を返す
     return max(MIN_DURATION, min(MAX_DURATION, n))  # 5〜1440 分の範囲に収まるようクランプして返す
 
