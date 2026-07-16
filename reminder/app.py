@@ -107,6 +107,9 @@ class PlannerApp:
         self.title_var = tk.StringVar()  # タスク名の入力フォームに紐づく変数
         self.hour_var = tk.StringVar(value=f"{start.hour:02d}")  # 開始時刻（時）の入力フォームに紐づく変数
         self.minute_var = tk.StringVar(value=f"{start.minute:02d}")  # 開始時刻（分）の入力フォームに紐づく変数
+        # 上で入力欄に書き込んだ既定値を記録しておく（時, 分）。ユーザーが値を
+        # 手で書き換えていないかを _refresh_stale_start_default() で判定するために使う
+        self._auto_start_default: tuple[int, int] = (start.hour, start.minute)
         self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))  # 所要時間（分）の入力フォームに紐づく変数
         self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])  # 繰り返し単位の選択に紐づく変数（初期値は「繰り返しなし」）
         self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))  # 繰り返し間隔の入力フォームに紐づく変数
@@ -422,8 +425,30 @@ class PlannerApp:
             value = default  # 指定されたフォールバック値を採用する（この後の行で範囲内にクランプする）
         return max(min_value, min(max_value, value))  # 最小・最大の範囲に収めて返す
 
+    def _refresh_stale_start_default(self) -> None:
+        """既定開始時刻の入力欄が、起動時または前回自動補完時のまま未変更なら、
+        現在時刻基準の既定値へ更新する。
+
+        アプリを起動したまま長時間使い続けると、クイック追加欄の既定値が
+        起動時刻のまま古くなる。ユーザーがそれに気づかず「＋タイムラインへ」を
+        押すと、make_due の「過去なら翌日へ繰り上げ」判定によって、意図せず
+        タスクが翌日に登録されてしまう（回帰防止）。ユーザーが値を手で
+        書き換えていれば（表示値が前回の自動補完値と一致しなければ）何もせず、
+        入力中の値を上書きしない。
+        """
+        displayed = (self.hour_var.get(), self.minute_var.get())  # 現在入力欄に表示されている（時, 分）の文字列
+        last_default = (f"{self._auto_start_default[0]:02d}",
+                        f"{self._auto_start_default[1]:02d}")  # 前回自動補完した値の文字列表現
+        if displayed != last_default:  # ユーザーが値を手で書き換えていれば
+            return  # 既定値を上書きせず、入力中の値をそのまま尊重する
+        fresh = self._default_start(self._get_now())  # 現在時刻基準で既定の開始時刻を計算し直す
+        self.hour_var.set(f"{fresh.hour:02d}")  # 入力欄の「時」を最新の既定値に更新する
+        self.minute_var.set(f"{fresh.minute:02d}")  # 入力欄の「分」を最新の既定値に更新する
+        self._auto_start_default = (fresh.hour, fresh.minute)  # 追跡している自動補完値も更新する
+
     def _input_start_time(self) -> datetime.time:
         """入力欄の開始時刻を正規化して time として返す。"""
+        self._refresh_stale_start_default()  # 未変更のまま古くなった既定値を、読み取る前に最新化する
         h = self._coerce_int(self.hour_var.get(), HOUR_MIN, HOUR_MAX)  # 入力欄の「時」を取得して有効範囲にクランプする
         m = self._coerce_int(self.minute_var.get(), MINUTE_MIN, MINUTE_MAX)  # 入力欄の「分」を取得して有効範囲にクランプする
         self.hour_var.set(f"{h:02d}")  # クランプ後の「時」を 2 桁ゼロ埋めで入力欄に書き戻す
