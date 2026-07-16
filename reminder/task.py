@@ -31,8 +31,10 @@ ISO_FMT = "%Y-%m-%dT%H:%M:%S"
 
 # 所要時間（分）の下限・上限と既定値。
 # 注意: timeline.build_day_timeline は日をまたぐタスクを「前のプランナー日」1 日分だけ
-# 遡って当日に含める設計（タスクは高々 2 日にまたがる前提）。MAX_DURATION を 24*60 より
-# 大きくする場合はその前提が崩れるため、timeline.py 側の日またぎ判定も合わせて見直すこと。
+# 遡って当日に含める設計（タスクは高々 2 日にまたがる前提）。timeline.carry_over_overdue の
+# 繰り越しスキップ判定（end_dt > day_start）も同じ前提に依存しており、MAX_DURATION を 24*60 より
+# 大きくすると「2 日以上前のタスクが繰り越されず表示もされない」空白が生じ得るため、
+# 変更時は timeline.py 側の両判定を合わせて見直すこと。
 MIN_DURATION = 5
 MAX_DURATION = 24 * 60
 DEFAULT_DURATION = 30
