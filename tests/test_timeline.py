@@ -322,6 +322,24 @@ class CarryOverTests(unittest.TestCase):
         tasks = [_t("当日深夜", "2026-06-07T00:30:00", 30)]
         self.assertEqual(carry_over_overdue(tasks, today, 9 * 60, 1 * 60), 0)
 
+    def test_in_progress_cross_day_task_not_carried(self):
+        # 前日 22:00 開始・所要 600 分（終了 6/7 08:00）の夜通しタスクは、6/7 の
+        # 起床時刻（07:00）を跨いでまだ進行中なので繰り越さない。
+        # build_day_timeline は end_dt > day_start のタスクを当日に表示する（「夜通し作業」の
+        # 回帰テスト参照）ため、ここで繰り越すと表示前に due が +24h 書き換わり永続データが壊れる。
+        today = datetime.date(2026, 6, 7)
+        tasks = [_t("夜通し作業", "2026-06-06T22:00:00", 600)]
+        self.assertEqual(carry_over_overdue(tasks, today), 0)
+        self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 6, 6, 22, 0))  # due は元のまま
+
+    def test_finished_cross_day_task_still_carried(self):
+        # 同じ前日 22:00 開始でも所要 60 分（終了 23:00、当日の起床時刻より前）なら
+        # もう占有していないので従来どおり繰り越す。
+        today = datetime.date(2026, 6, 7)
+        tasks = [_t("昨晩の残り", "2026-06-06T22:00:00", 60)]
+        self.assertEqual(carry_over_overdue(tasks, today), 1)
+        self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 6, 7, 22, 0))
+
 
 class PruneCompletedTests(unittest.TestCase):
     def test_drops_past_completed_keeps_today_and_incomplete(self):

@@ -279,11 +279,17 @@ def carry_over_overdue(
         繰り越したタスク数。
     """
     moved = 0  # 繰り越したタスク数のカウンタを 0 で初期化する
+    day_start, _ = day_bounds(today, wake_min, sleep_min)  # 当日の起床日時（日跨ぎ継続タスクの判定基準）を求める
     for task in tasks:  # 全タスクに対してループする
         if not task.is_scheduled or task.completed:  # スケジュールなしまたは完了済みのタスクは繰り越し対象外
             continue  # スキップして次のタスクへ進む
         start = task.due_dt  # タスクの開始日時を取り出す
         if planner_day(start, wake_min, sleep_min) < today:  # タスクのプランナー日が今日より前の場合
+            # 終了が当日の起床時刻より後なら「日をまたいで今も続いている」タスクなので繰り越さない。
+            # build_day_timeline の包含条件（前日開始かつ end_dt > day_start は当日に表示）と同じ基準に
+            # 揃えないと、進行中の夜通しタスクの開始が +24h 書き換わって永続データが壊れてしまう。
+            if task.end_dt > day_start:  # 終了日時が今日の起床時刻を越えている（＝まだ占有中）場合
+                continue  # 繰り越さずに次のタスクへ進む
             new_start = _calendar_dt(today, start.time(), wake_min, sleep_min)  # 今日の同時刻を暦日として計算する
             task.due = new_start.strftime(ISO_FMT)  # タスクの開始日時を今日に書き換える
             moved += 1  # 繰り越し件数を 1 増やす
