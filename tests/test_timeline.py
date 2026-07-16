@@ -340,6 +340,15 @@ class CarryOverTests(unittest.TestCase):
         self.assertEqual(carry_over_overdue(tasks, today), 1)
         self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 6, 7, 22, 0))
 
+    def test_task_ending_exactly_at_wake_is_carried(self):
+        # 境界値: 終了がちょうど当日の起床時刻（既定 07:00）の場合。
+        # 判定は end_dt > day_start の厳密比較なので繰り越す（build_day_timeline も
+        # 同じ厳密比較で当日に表示しないため、両者の整合が保たれる）。
+        today = datetime.date(2026, 6, 7)
+        tasks = [_t("起床時刻ぴったり", "2026-06-06T22:00:00", 540)]  # 終了 6/7 07:00
+        self.assertEqual(carry_over_overdue(tasks, today), 1)
+        self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 6, 7, 22, 0))
+
 
 class PruneCompletedTests(unittest.TestCase):
     def test_drops_past_completed_keeps_today_and_incomplete(self):
