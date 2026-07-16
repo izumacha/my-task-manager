@@ -25,6 +25,12 @@ class DurationAndBacklogTests(unittest.TestCase):
     def test_duration_non_numeric_defaults(self):
         self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", duration_min="ab").duration_min, DEFAULT_DURATION)
 
+    def test_duration_infinite_defaults(self):
+        # int(float('inf')) は TypeError/ValueError ではなく OverflowError を送出するため、
+        # 他の変換不能値と同じく既定値へフォールバックすることを検証する
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", duration_min=float("inf")).duration_min, DEFAULT_DURATION)
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", duration_min=float("-inf")).duration_min, DEFAULT_DURATION)
+
     def test_backlog_task_is_not_scheduled(self):
         t = Task(title="あとで", due="")
         self.assertFalse(t.is_scheduled)
@@ -96,6 +102,12 @@ class TaskModelTests(unittest.TestCase):
 
     def test_non_numeric_interval_defaults(self):
         self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", recur_interval="abc").recur_interval, 1)
+
+    def test_interval_infinite_defaults(self):
+        # int(float('inf')) は TypeError/ValueError ではなく OverflowError を送出するため、
+        # 他の変換不能値と同じく既定値（最小値）へフォールバックすることを検証する
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", recur_interval=float("inf")).recur_interval, 1)
+        self.assertEqual(Task(title="x", due="2026-06-06T09:00:00", recur_interval=float("-inf")).recur_interval, 1)
 
     def test_to_dict_from_dict_round_trip(self):
         t = Task(title="運動", due="2026-06-06T18:00:00", recur_unit=RECUR_DAILY, recur_interval=3)
