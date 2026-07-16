@@ -508,9 +508,10 @@ class CalendarRenderTests(AppTestCase):
         # cb_box も隣のタスクの領域へ流出し、チェックボックスをクリックしたつもり
         # が別タスクを完了させてしまう恐れがあった。
         # チェックボックス（半径 CAL_CHECK_R + 判定余白 3px）がブロック自身の
-        # 右端に収まる程度の重なり数(14件)・幅(460px 既定)で検証する
-        # （12 件・最小幅の極端条件は物理的にチェックボックスの直径すら
-        # 収まらないため、ここでは「収まりうる条件で確実に収める」ことを確認する）。
+        # 右端に収まる程度の重なり数(14件)・幅(460px 既定)で検証する。
+        # ブロック幅がチェックボックスの判定直径未満まで狭まる、さらに極端な
+        # 条件（15 件以上）は test_checkbox_hit_area_never_leaks_even_when_block_narrower_than_checkbox
+        # で別途検証する。
         today = datetime.date.today()
         base = datetime.datetime.combine(today, datetime.time(10, 0))  # 同一開始時刻に重ねる基準時刻
         tasks = [Task(title=f"会議{i}", due=_iso(base), duration_min=60) for i in range(14)]  # 14 件すべて重なるタスク
@@ -534,6 +535,27 @@ class CalendarRenderTests(AppTestCase):
                 continue  # 対象外なのでスキップする
             text_x_used = call.args[0]  # create_text に渡された描画開始 x 座標を取り出す
             self.assertLessEqual(text_x_used, block_x1[tags[1]] + 1e-6)  # 自ブロックの右端を超えて隣のレーンへはみ出さないこと
+
+    def test_checkbox_hit_area_never_leaks_even_when_block_narrower_than_checkbox(self):
+        # 回帰テスト: cb_cx（チェックボックス中心）を自ブロックの x 範囲へ
+        # クランプするだけでは、ブロック幅 (x1-x0) がチェックボックスの判定
+        # 直径 2*(CAL_CHECK_R+3) 未満まで狭まった場合に不十分だった。
+        # 中心を左端(x0+r+3)へ寄せても、そこから右へ r+3 だけ離れた cb_box の
+        # 右端は x1 を超えたまま残り、隣のレーンへ判定領域が流出してしまう
+        # （既定幅 460px では 15 件重なりから発生。修正前に実測して確認済み）。
+        # チェックボックスの判定領域そのものを x0/x1 で個別にクランプすることで、
+        # レーンがどれだけ狭くなっても隣タスクの完了操作を誤爆しないことを検証する。
+        today = datetime.date.today()
+        base = datetime.datetime.combine(today, datetime.time(10, 0))  # 同一開始時刻に重ねる基準時刻
+        tasks = [Task(title=f"会議{i}", due=_iso(base), duration_min=60) for i in range(20)]  # 20 件すべて重なるタスク（ブロック幅がチェックボックス判定直径を下回る条件）
+        app, _ = self._app(tasks)
+        app._tl_width = 460  # 既定の Canvas 幅で検証する
+        app._render_timeline(today)
+        self.assertEqual(len(app._tl_blocks), len(tasks))  # 全タスクが描画される（欠落しない）
+        for x0, _y0, x1, _y1, cb_box, _tid, _done in app._tl_blocks:  # 各ブロックとそのチェックボックス領域を検査する
+            cb_left, _cb_top, cb_right, _cb_bottom = cb_box  # チェックボックスの判定領域の左右端を取り出す
+            self.assertGreaterEqual(cb_left, x0 - 1e-6)  # 判定領域がブロック左端より内側にあること
+            self.assertLessEqual(cb_right, x1 + 1e-6)  # 判定領域がブロック右端を超えて隣のレーンへはみ出さないこと（誤爆防止）
 
     def test_short_consecutive_tasks_do_not_visually_overlap(self):
         # 所要時間が短いタスク（描画時に theme.CAL_MIN_BLOCK_HEIGHT へクランプされる）が
