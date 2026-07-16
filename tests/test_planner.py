@@ -500,6 +500,29 @@ class CalendarRenderTests(AppTestCase):
         for x0, _y0, x1, _y1, _cb, _tid, _done in app._tl_blocks:  # 各ブロックの矩形を検査する
             self.assertGreater(x1, x0)  # ブロック幅は常に正（反転・ゼロ幅で消えない）
 
+    def test_checkbox_stays_within_own_block_when_lanes_are_narrow(self):
+        # 回帰テスト: チェックボックスの中心 x はストライプ右隣の固定オフセットで
+        # 計算されるため、同時刻に多数のタスクが重なりレーン幅が狭くなると、
+        # 固定オフセットが自分のブロック右端(x1)を超えて隣のレーンまで
+        # はみ出していた。すると描画上ずれるだけでなく、クリック判定用の
+        # cb_box も隣のタスクの領域へ流出し、チェックボックスをクリックしたつもり
+        # が別タスクを完了させてしまう恐れがあった。
+        # チェックボックス（半径 CAL_CHECK_R + 判定余白 3px）がブロック自身の
+        # 右端に収まる程度の重なり数(14件)・幅(460px 既定)で検証する
+        # （12 件・最小幅の極端条件は物理的にチェックボックスの直径すら
+        # 収まらないため、ここでは「収まりうる条件で確実に収める」ことを確認する）。
+        today = datetime.date.today()
+        base = datetime.datetime.combine(today, datetime.time(10, 0))  # 同一開始時刻に重ねる基準時刻
+        tasks = [Task(title=f"会議{i}", due=_iso(base), duration_min=60) for i in range(14)]  # 14 件すべて重なるタスク
+        app, _ = self._app(tasks)
+        app._tl_width = 460  # 既定の Canvas 幅で検証する（極端な最小幅ではない現実的な条件）
+        app._render_timeline(today)
+        self.assertEqual(len(app._tl_blocks), len(tasks))  # 全タスクが描画される（欠落しない）
+        for x0, _y0, x1, _y1, cb_box, _tid, _done in app._tl_blocks:  # 各ブロックとそのチェックボックス領域を検査する
+            cb_left, _cb_top, cb_right, _cb_bottom = cb_box  # チェックボックスの判定領域の左右端を取り出す
+            self.assertGreaterEqual(cb_left, x0 - 1e-6)  # チェックボックスがブロック左端より内側にあること
+            self.assertLessEqual(cb_right, x1 + 1e-6)  # チェックボックスがブロック右端を超えて隣のレーンへはみ出さないこと
+
     def test_short_consecutive_tasks_do_not_visually_overlap(self):
         # 所要時間が短いタスク（描画時に theme.CAL_MIN_BLOCK_HEIGHT へクランプされる）が
         # 隙間なく連続すると、実終了時刻を超えて描かれたクランプ分が次のタスクの
