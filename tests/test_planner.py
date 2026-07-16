@@ -87,6 +87,41 @@ class InputNormalizeTests(AppTestCase):
         self.assertEqual(app.hour_var.get(), "23")
         self.assertEqual(app.minute_var.get(), "07")
 
+    def test_stale_default_refreshes_to_current_time_when_untouched(self):
+        # アプリを起動したまま時間が経過しても、開始時刻欄に触れていなければ
+        # 「＋タイムラインへ」実行時に最新時刻基準の既定値へ更新され、
+        # 古い既定値のまま翌日へ意図せず繰り上がるのを防ぐ（回帰防止）。
+        app, _ = self._app()
+        app.title_var.set("メール確認")
+        # real wall-clock に依存しないよう、起動時刻を固定値にして入力欄と
+        # 追跡値をその時刻の既定値に合わせておく（起動直後を模擬する）
+        launch = datetime.datetime(2026, 6, 1, 9, 0)
+        launch_default = PlannerApp._default_start(launch)
+        app.hour_var.set(f"{launch_default.hour:02d}")
+        app.minute_var.set(f"{launch_default.minute:02d}")
+        app._auto_start_default = (launch_default.hour, launch_default.minute)
+        # 起動から時間が経ち 15:00 になっても、ユーザーは入力欄に触れていない
+        later = datetime.datetime(2026, 6, 1, 15, 0)
+        app._get_now = lambda: later
+        app.add_to_timeline()
+        # 起動時刻(9:05)基準ではなく 15:00 基準の既定値が使われ、当日の未来時刻として登録される
+        self.assertEqual(app.tasks[0].due_dt.date(), later.date())
+        self.assertGreaterEqual(app.tasks[0].due_dt, later)
+
+    def test_manual_start_time_is_not_overwritten_by_stale_refresh(self):
+        # ユーザーが開始時刻を手で書き換えていれば、時間が経過しても
+        # _input_start_time() はその値を上書きしない
+        app, _ = self._app()
+        launch = datetime.datetime(2026, 6, 1, 9, 0)
+        launch_default = PlannerApp._default_start(launch)
+        app._auto_start_default = (launch_default.hour, launch_default.minute)
+        # ユーザーが開始時刻を手で書き換える（自動補完値とは異なる値にする）
+        app.hour_var.set("22")
+        app.minute_var.set("15")
+        app._get_now = lambda: datetime.datetime(2026, 6, 1, 15, 0)
+        t = app._input_start_time()
+        self.assertEqual((t.hour, t.minute), (22, 15))
+
     def test_duration_normalized(self):
         app, _ = self._app()
         app.dur_var.set("100000")
