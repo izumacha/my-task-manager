@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
 import platform
 import subprocess
 import threading
@@ -13,14 +12,19 @@ def _set_window_icon(root: tk.Tk) -> None:
     """SVG アイコンをウィンドウに設定する。変換ライブラリが無い場合は無視する。"""
     try:
         import cairosvg  # type: ignore[import]  # SVG→PNG 変換ライブラリをオプションでインポートする（なければ除外）
+        import importlib.resources as resources  # パッケージ同梱データをインストール形態に依存せず取得するための標準ライブラリをインポートする
 
-        # パッケージの親ディレクトリ（プロジェクトルート）の assets/ を参照する
-        svg_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "assets",
-            "reminder_icon.svg",
-        )  # SVG アイコンファイルの絶対パスを組み立てる
-        png_data = cairosvg.svg2png(url=svg_path, output_width=64, output_height=64)  # SVG を 64×64px の PNG バイト列に変換する
+        # reminder パッケージに同梱した SVG アイコンを importlib.resources 経由で参照する。
+        # 旧実装は __file__ から 2 階層上（プロジェクトルート）の assets/ を直接参照して
+        # いたが、pyproject.toml の packages=["reminder"] は reminder/ の外にある assets/ を
+        # 配布物（wheel）に含めないため、`pip install`/`pipx install` した通常インストール後は
+        # 常にファイルが存在せずアイコン設定が黙ってスキップされ続けていた
+        # （`pip install -e .` の editable install やソース直接実行では __file__ がリポジトリを
+        # 指すため偶然動いて見えていた）。アイコンをパッケージ内リソースとして同梱し直すことで、
+        # ソース直接実行・editable install・wheel install・pipx install のいずれでも解決できるようにする。
+        icon_ref = resources.files("reminder") / "assets" / "reminder_icon.svg"  # パッケージ内リソースへの参照を取得する
+        with resources.as_file(icon_ref) as svg_path:  # zip 化されたパッケージでも実ファイルパスとして扱えるよう一時展開する
+            png_data = cairosvg.svg2png(url=str(svg_path), output_width=64, output_height=64)  # SVG を 64×64px の PNG バイト列に変換する
         icon = tk.PhotoImage(data=base64.b64encode(png_data))  # PNG バイト列を Base64 エンコードして tkinter の画像オブジェクトを作る
         # Tk 側で画像が解放されないように参照を保持する。
         root._icon_image = icon  # type: ignore[attr-defined]  # ガベージコレクションで解放されないよう root に参照を保持させる
