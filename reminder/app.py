@@ -68,6 +68,7 @@ from .time_utils import (
     HOUR_MIN,
     MINUTE_MAX,
     MINUTE_MIN,
+    REFRESH_INTERVAL_MS,
     STATUS_IDLE,
     delay_ms_until,
 )
@@ -122,6 +123,7 @@ class PlannerApp:
         self._build_ui()  # ウィンドウとすべての UI コンポーネントを組み立てる
         self._refresh()  # タイムライン・バックログ・統計を初回描画する
         self._schedule_all()  # 起動時点で未来のタスク通知をすべてスケジュールする
+        self._schedule_periodic_refresh()  # 予定の有無に関わらず定期的に画面を最新化するタイマーを起動する
 
     # ------------------------------------------------------------ 設定アクセス
 
@@ -957,6 +959,13 @@ class PlannerApp:
     def _render_backlog(self, today: datetime.date,
                         now: datetime.datetime | None = None) -> None:
         tree = self.backlog_tree  # バックログの Treeview を取得する
+        # 全行を delete→insert で作り直すため、Tk の選択状態はここで自動的には
+        # 引き継がれない。_tick による定期リフレッシュ導入でユーザー操作を伴わず
+        # _refresh() が周期的にも呼ばれるようになったため、これを退避・復元しないと
+        # 「あとでやる」タスクを選択したまま数十秒操作しないだけで選択が消え、
+        # 「完了」「予定に追加」ボタンが無反応になる回帰が生じる（既存の cb_selected/
+        # _tl_selected は task.id で管理しているためこの問題は起きない）。
+        selected_id = tree.selection()[0] if tree.selection() else None  # 再描画前に選択中のタスク ID を退避する
         for item in tree.get_children():  # 現在表示されているすべての行を取得してループする
             tree.delete(item)  # 古い行を削除して一覧をクリアする
         now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（時刻源を一元化する）
@@ -975,6 +984,8 @@ class PlannerApp:
                         values=(title, format_duration(task.duration_min),
                                 self._recur_text(task)),
                         tags=(tag,))  # タスクを Treeview の末尾に追加する
+        if selected_id is not None and tree.exists(selected_id):  # 選択していたタスクが再描画後もまだ一覧に存在するなら
+            tree.selection_set(selected_id)  # 選択状態を復元する（存在しない ID を渡すと Tk 側で例外になるため exists で確認する）
 
     def _render_stats(self, today: datetime.date,
                       now: datetime.datetime | None = None) -> None:
@@ -1002,6 +1013,38 @@ class PlannerApp:
                 self._schedule_task(task)  # 各タスクの通知ジョブを登録する
             except Exception as e:  # スケジュール登録の例外を捕捉して残りのタスクの処理を続ける
                 logging.warning("タスクの通知スケジュールに失敗しました: %s: %s", task.id, e)  # 失敗してもクラッシュさせず警告ログにタスクIDと原因を記録する
+
+    def _schedule_periodic_refresh(self) -> None:
+        """REFRESH_INTERVAL_MS 後に _tick() を呼ぶジョブを 1 件だけ登録する。
+
+        タスクの通知ジョブは「次の予定時刻」にしか発火しないため、直近に予定が
+        無い間はアプリを開いたままでも画面が完全に固まってしまう（現在時刻ライン
+        が動かない、日付が変わっても _roll_over の繰り越し・整理が走らない等）。
+        このタイマーだけは self.jobs（タスク ID → 通知ジョブ ID）とは無関係な
+        独立のループなので、_cancel_job / _schedule_task の対象にはしない。
+        """
+        self.root.after(REFRESH_INTERVAL_MS, self._tick)  # 一定間隔後に _tick を呼ぶジョブを登録する
+
+    def _tick(self) -> None:
+        """定期リフレッシュの本体。_refresh() を呼んだ後、必ず次回分を再登録する。
+
+        _refresh() は内部で _roll_over()（日またぎの繰り越し・完了整理）も行うため、
+        次の予定が数時間先でも日付が変わったタイミングで自動的に反映される。
+        """
+        try:
+            self._refresh()  # 日付・カレンダー（now ライン含む）・統計を最新状態に再描画する
+        except Exception as e:  # 定期処理の失敗でアプリを落とさない（fail-safe。§9）
+            logging.debug("定期更新に失敗しました: %s", e)  # 原因をデバッグログに残す（§6: エラーを握り潰さない）
+        finally:
+            # 例外が起きても次のティックは必ず予約し直し、定期更新が完全に止まらないようにする。
+            # _schedule_periodic_refresh() 自体（root.after() の呼び出し）が失敗するケース
+            # （例: ウィンドウ破棄中の TclError）もここで捕捉しないと、この finally から
+            # 例外が漏れて連鎖が予告なく止まってしまうため、再スケジュールの失敗も
+            # 明示的にログへ残すだけに留める。
+            try:
+                self._schedule_periodic_refresh()
+            except Exception as e:  # 次回分の登録自体が失敗しても、原因をログへ残すだけにする
+                logging.debug("定期更新の再スケジュールに失敗しました: %s", e)  # §6: エラーを握り潰さない
 
     def _schedule_task(self, task: Task, now: datetime.datetime | None = None) -> None:
         """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。

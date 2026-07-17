@@ -12,6 +12,7 @@ from reminder.app import PlannerApp, ReminderApp
 from reminder.config import Prefs
 from reminder.recurrence import RECUR_DAILY, RECUR_LABELS
 from reminder.task import DEFAULT_DURATION, ISO_FMT, Task
+from reminder.time_utils import REFRESH_INTERVAL_MS
 
 
 class _DummyVar:
@@ -53,6 +54,7 @@ class AppTestCase(unittest.TestCase):
         with patch.object(PlannerApp, "_build_ui"), \
              patch.object(PlannerApp, "_refresh"), \
              patch.object(PlannerApp, "_schedule_all"), \
+             patch.object(PlannerApp, "_schedule_periodic_refresh"), \
              patch("reminder.app.load_tasks", return_value=list(tasks or [])), \
              patch("reminder.app.load_prefs", return_value=prefs or Prefs()), \
              patch("reminder.app.tk.StringVar", side_effect=lambda value="": _DummyVar(value)):
@@ -431,6 +433,56 @@ class ScheduleTaskTests(AppTestCase):
         self.assertEqual(app.jobs.get(t2.id), "job-2")
 
 
+class PeriodicRefreshTests(AppTestCase):
+    """次の予定が数時間先でも画面が固まらないことを保証する定期リフレッシュのテスト。
+
+    タスクの通知ジョブ（root.after）は「次の予定時刻」にしか発火しないため、
+    これが無いとアプリを開いたまま次の予定まで間が空いた場合、現在時刻ライン・
+    日付ヘッダ・統計・日またぎの繰り越し（_roll_over）が古いまま固まる回帰を防ぐ。
+    """
+
+    def test_init_schedules_periodic_refresh(self):
+        # このテストだけは _schedule_periodic_refresh をパッチしない（AppTestCase._app()
+        # は他のテストへの副作用を避けるためパッチ済みなのでここでは使わず組み立て直す）
+        root = Mock()
+        root.after.return_value = "tick-job"
+        with patch.object(PlannerApp, "_build_ui"), \
+             patch.object(PlannerApp, "_refresh"), \
+             patch.object(PlannerApp, "_schedule_all"), \
+             patch("reminder.app.load_tasks", return_value=[]), \
+             patch("reminder.app.load_prefs", return_value=Prefs()), \
+             patch("reminder.app.tk.StringVar", side_effect=lambda value="": _DummyVar(value)):
+            app = PlannerApp(root)  # 起動時に定期リフレッシュのジョブが登録されることを確認する対象
+        # 起動直後に REFRESH_INTERVAL_MS 後の _tick 呼び出しがちょうど 1 件登録されている
+        root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)
+
+    def test_tick_refreshes_and_reschedules(self):
+        app, root = self._app()
+        app._refresh = Mock()  # _refresh() が呼ばれたことだけを検証する
+        root.after.reset_mock()  # __init__ 中の呼び出し履歴をクリアする
+        app._tick()
+        app._refresh.assert_called_once()  # 画面（now ライン・日付・統計・繰り越し）を最新化する
+        root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)  # 次回分も必ず再登録される
+
+    def test_tick_reschedules_even_if_refresh_fails(self):
+        # _refresh() が例外を出しても定期更新の連鎖が完全に止まらないことを確認する（fail-safe, §9）
+        app, root = self._app()
+        app._refresh = Mock(side_effect=RuntimeError("boom"))
+        root.after.reset_mock()
+        app._tick()  # 例外を外へ送出せずに完了する
+        root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)
+
+    def test_tick_survives_reschedule_failure_itself(self):
+        # root.after() 自体が失敗する（例: ウィンドウ破棄中の TclError）ケースでも、
+        # _tick() から例外が外へ漏れないことを確認する（finally 内の再スケジュールも fail-safe）
+        app, root = self._app()
+        app._refresh = Mock()
+        root.after.reset_mock()
+        root.after.side_effect = RuntimeError("root destroyed")
+        app._tick()  # 例外を外へ送出せずに完了する
+        app._refresh.assert_called_once()
+
+
 class OnTaskDueTests(AppTestCase):
     @patch("reminder.app.messagebox.showinfo")
     @patch("reminder.app.play_notification_sound")
@@ -501,6 +553,39 @@ class RenderTests(AppTestCase):
         self.assertTrue(app.timeline_tree.create_line.called)
         self.assertTrue(app.backlog_tree.insert.called)
         self.assertIn("完了", app.stats_var.get())
+
+
+class BacklogSelectionTests(AppTestCase):
+    """_render_backlog は delete→insert で全行を作り直すため、Tk の選択状態は
+    明示的に退避・復元しないと消えてしまう。定期リフレッシュ（_tick）導入で
+    ユーザー操作を伴わず _refresh() が周期的にも呼ばれるようになったため、
+    選択したまま何もせず数十秒待つだけで選択が消え「完了」「予定に追加」が
+    無反応になる回帰を防ぐ。"""
+
+    def test_selection_restored_when_task_still_present(self):
+        task = Task(title="あとで", due="")
+        app, _ = self._app([task])
+        app.backlog_tree.selection.return_value = (task.id,)  # このタスクが選択中とする
+        app.backlog_tree.exists.return_value = True  # 再描画後もこの ID の行が存在する
+        app._render_backlog(datetime.date.today())
+        app.backlog_tree.selection_set.assert_called_once_with(task.id)  # 選択状態が復元される
+
+    def test_selection_not_restored_when_task_gone(self):
+        # 選択していたタスクが完了・削除・予定化などで一覧から消えていれば復元しない
+        # （存在しない iid を selection_set に渡すと Tk 側で例外になるため exists で確認する）
+        task = Task(title="あとで", due="")
+        app, _ = self._app([task])
+        app.backlog_tree.selection.return_value = ("stale-id",)
+        app.backlog_tree.exists.return_value = False
+        app._render_backlog(datetime.date.today())
+        app.backlog_tree.selection_set.assert_not_called()
+
+    def test_no_restore_attempt_when_nothing_selected(self):
+        app, _ = self._app()
+        app.backlog_tree.selection.return_value = ()  # 何も選択されていない
+        app._render_backlog(datetime.date.today())
+        app.backlog_tree.exists.assert_not_called()  # 選択が無ければ復元処理自体をスキップする
+        app.backlog_tree.selection_set.assert_not_called()
 
 
 class CalendarRenderTests(AppTestCase):
