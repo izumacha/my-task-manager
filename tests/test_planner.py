@@ -472,6 +472,16 @@ class PeriodicRefreshTests(AppTestCase):
         app._tick()  # 例外を外へ送出せずに完了する
         root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)
 
+    def test_tick_survives_reschedule_failure_itself(self):
+        # root.after() 自体が失敗する（例: ウィンドウ破棄中の TclError）ケースでも、
+        # _tick() から例外が外へ漏れないことを確認する（finally 内の再スケジュールも fail-safe）
+        app, root = self._app()
+        app._refresh = Mock()
+        root.after.reset_mock()
+        root.after.side_effect = RuntimeError("root destroyed")
+        app._tick()  # 例外を外へ送出せずに完了する
+        app._refresh.assert_called_once()
+
 
 class OnTaskDueTests(AppTestCase):
     @patch("reminder.app.messagebox.showinfo")
@@ -543,6 +553,39 @@ class RenderTests(AppTestCase):
         self.assertTrue(app.timeline_tree.create_line.called)
         self.assertTrue(app.backlog_tree.insert.called)
         self.assertIn("完了", app.stats_var.get())
+
+
+class BacklogSelectionTests(AppTestCase):
+    """_render_backlog は delete→insert で全行を作り直すため、Tk の選択状態は
+    明示的に退避・復元しないと消えてしまう。定期リフレッシュ（_tick）導入で
+    ユーザー操作を伴わず _refresh() が周期的にも呼ばれるようになったため、
+    選択したまま何もせず数十秒待つだけで選択が消え「完了」「予定に追加」が
+    無反応になる回帰を防ぐ。"""
+
+    def test_selection_restored_when_task_still_present(self):
+        task = Task(title="あとで", due="")
+        app, _ = self._app([task])
+        app.backlog_tree.selection.return_value = (task.id,)  # このタスクが選択中とする
+        app.backlog_tree.exists.return_value = True  # 再描画後もこの ID の行が存在する
+        app._render_backlog(datetime.date.today())
+        app.backlog_tree.selection_set.assert_called_once_with(task.id)  # 選択状態が復元される
+
+    def test_selection_not_restored_when_task_gone(self):
+        # 選択していたタスクが完了・削除・予定化などで一覧から消えていれば復元しない
+        # （存在しない iid を selection_set に渡すと Tk 側で例外になるため exists で確認する）
+        task = Task(title="あとで", due="")
+        app, _ = self._app([task])
+        app.backlog_tree.selection.return_value = ("stale-id",)
+        app.backlog_tree.exists.return_value = False
+        app._render_backlog(datetime.date.today())
+        app.backlog_tree.selection_set.assert_not_called()
+
+    def test_no_restore_attempt_when_nothing_selected(self):
+        app, _ = self._app()
+        app.backlog_tree.selection.return_value = ()  # 何も選択されていない
+        app._render_backlog(datetime.date.today())
+        app.backlog_tree.exists.assert_not_called()  # 選択が無ければ復元処理自体をスキップする
+        app.backlog_tree.selection_set.assert_not_called()
 
 
 class CalendarRenderTests(AppTestCase):
