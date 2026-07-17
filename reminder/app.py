@@ -68,6 +68,7 @@ from .time_utils import (
     HOUR_MIN,
     MINUTE_MAX,
     MINUTE_MIN,
+    REFRESH_INTERVAL_MS,
     STATUS_IDLE,
     delay_ms_until,
 )
@@ -122,6 +123,7 @@ class PlannerApp:
         self._build_ui()  # ウィンドウとすべての UI コンポーネントを組み立てる
         self._refresh()  # タイムライン・バックログ・統計を初回描画する
         self._schedule_all()  # 起動時点で未来のタスク通知をすべてスケジュールする
+        self._schedule_periodic_refresh()  # 予定の有無に関わらず定期的に画面を最新化するタイマーを起動する
 
     # ------------------------------------------------------------ 設定アクセス
 
@@ -1002,6 +1004,31 @@ class PlannerApp:
                 self._schedule_task(task)  # 各タスクの通知ジョブを登録する
             except Exception as e:  # スケジュール登録の例外を捕捉して残りのタスクの処理を続ける
                 logging.warning("タスクの通知スケジュールに失敗しました: %s: %s", task.id, e)  # 失敗してもクラッシュさせず警告ログにタスクIDと原因を記録する
+
+    def _schedule_periodic_refresh(self) -> None:
+        """REFRESH_INTERVAL_MS 後に _tick() を呼ぶジョブを 1 件だけ登録する。
+
+        タスクの通知ジョブは「次の予定時刻」にしか発火しないため、直近に予定が
+        無い間はアプリを開いたままでも画面が完全に固まってしまう（現在時刻ライン
+        が動かない、日付が変わっても _roll_over の繰り越し・整理が走らない等）。
+        このタイマーだけは self.jobs（タスク ID → 通知ジョブ ID）とは無関係な
+        独立のループなので、_cancel_job / _schedule_task の対象にはしない。
+        """
+        self.root.after(REFRESH_INTERVAL_MS, self._tick)  # 一定間隔後に _tick を呼ぶジョブを登録する
+
+    def _tick(self) -> None:
+        """定期リフレッシュの本体。_refresh() を呼んだ後、必ず次回分を再登録する。
+
+        _refresh() は内部で _roll_over()（日またぎの繰り越し・完了整理）も行うため、
+        次の予定が数時間先でも日付が変わったタイミングで自動的に反映される。
+        """
+        try:
+            self._refresh()  # 日付・カレンダー（now ライン含む）・統計を最新状態に再描画する
+        except Exception as e:  # 定期処理の失敗でアプリを落とさない（fail-safe。§9）
+            logging.debug("定期更新に失敗しました: %s", e)  # 原因をデバッグログに残す（§6: エラーを握り潰さない）
+        finally:
+            # 例外が起きても次のティックは必ず予約し直し、定期更新が完全に止まらないようにする
+            self._schedule_periodic_refresh()
 
     def _schedule_task(self, task: Task, now: datetime.datetime | None = None) -> None:
         """開始時刻に通知するジョブを登録する（未スケジュール/過去/完了は対象外）。

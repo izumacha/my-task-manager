@@ -12,6 +12,7 @@ from reminder.app import PlannerApp, ReminderApp
 from reminder.config import Prefs
 from reminder.recurrence import RECUR_DAILY, RECUR_LABELS
 from reminder.task import DEFAULT_DURATION, ISO_FMT, Task
+from reminder.time_utils import REFRESH_INTERVAL_MS
 
 
 class _DummyVar:
@@ -53,6 +54,7 @@ class AppTestCase(unittest.TestCase):
         with patch.object(PlannerApp, "_build_ui"), \
              patch.object(PlannerApp, "_refresh"), \
              patch.object(PlannerApp, "_schedule_all"), \
+             patch.object(PlannerApp, "_schedule_periodic_refresh"), \
              patch("reminder.app.load_tasks", return_value=list(tasks or [])), \
              patch("reminder.app.load_prefs", return_value=prefs or Prefs()), \
              patch("reminder.app.tk.StringVar", side_effect=lambda value="": _DummyVar(value)):
@@ -429,6 +431,46 @@ class ScheduleTaskTests(AppTestCase):
         app._schedule_all()
         self.assertNotIn(t1.id, app.jobs)
         self.assertEqual(app.jobs.get(t2.id), "job-2")
+
+
+class PeriodicRefreshTests(AppTestCase):
+    """次の予定が数時間先でも画面が固まらないことを保証する定期リフレッシュのテスト。
+
+    タスクの通知ジョブ（root.after）は「次の予定時刻」にしか発火しないため、
+    これが無いとアプリを開いたまま次の予定まで間が空いた場合、現在時刻ライン・
+    日付ヘッダ・統計・日またぎの繰り越し（_roll_over）が古いまま固まる回帰を防ぐ。
+    """
+
+    def test_init_schedules_periodic_refresh(self):
+        # このテストだけは _schedule_periodic_refresh をパッチしない（AppTestCase._app()
+        # は他のテストへの副作用を避けるためパッチ済みなのでここでは使わず組み立て直す）
+        root = Mock()
+        root.after.return_value = "tick-job"
+        with patch.object(PlannerApp, "_build_ui"), \
+             patch.object(PlannerApp, "_refresh"), \
+             patch.object(PlannerApp, "_schedule_all"), \
+             patch("reminder.app.load_tasks", return_value=[]), \
+             patch("reminder.app.load_prefs", return_value=Prefs()), \
+             patch("reminder.app.tk.StringVar", side_effect=lambda value="": _DummyVar(value)):
+            app = PlannerApp(root)  # 起動時に定期リフレッシュのジョブが登録されることを確認する対象
+        # 起動直後に REFRESH_INTERVAL_MS 後の _tick 呼び出しがちょうど 1 件登録されている
+        root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)
+
+    def test_tick_refreshes_and_reschedules(self):
+        app, root = self._app()
+        app._refresh = Mock()  # _refresh() が呼ばれたことだけを検証する
+        root.after.reset_mock()  # __init__ 中の呼び出し履歴をクリアする
+        app._tick()
+        app._refresh.assert_called_once()  # 画面（now ライン・日付・統計・繰り越し）を最新化する
+        root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)  # 次回分も必ず再登録される
+
+    def test_tick_reschedules_even_if_refresh_fails(self):
+        # _refresh() が例外を出しても定期更新の連鎖が完全に止まらないことを確認する（fail-safe, §9）
+        app, root = self._app()
+        app._refresh = Mock(side_effect=RuntimeError("boom"))
+        root.after.reset_mock()
+        app._tick()  # 例外を外へ送出せずに完了する
+        root.after.assert_called_once_with(REFRESH_INTERVAL_MS, app._tick)
 
 
 class OnTaskDueTests(AppTestCase):
