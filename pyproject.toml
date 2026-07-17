@@ -45,9 +45,16 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# setuptools のフラットレイアウト自動検出は assets/ と contract/ もトップレベル
-# パッケージとみなして「複数パッケージを検出した」とビルドを拒否する（assets/contract は
-# コードではなくデータディレクトリで、実際に配布すべき Python パッケージは reminder/ のみ）。
+# setuptools のフラットレイアウト自動検出は contract/ もトップレベルパッケージとみなして
+# 「複数パッケージを検出した」とビルドを拒否する（contract はコードではなくテスト専用の
+# データディレクトリで、実際に配布すべき Python パッケージは reminder/ のみ）。
 # 明示的に列挙することで pip install -e . / pipx install が失敗する問題を解消する。
 packages = ["reminder"]
+
+[tool.setuptools.package-data]
+# reminder/assets/reminder_icon.svg（ウィンドウアイコン用 SVG）を wheel/sdist に同梱する。
+# これが無いと `pip install`/`pipx install` の通常インストール後に
+# reminder/notifications.py::_set_window_icon() が参照するファイルが存在せず、
+# cairosvg を入れてもアイコン設定が常に黙ってスキップされてしまう。
+reminder = ["assets/*.svg"]
 

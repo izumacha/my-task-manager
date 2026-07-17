@@ -7,7 +7,7 @@ LOCAL_BIN="${HOME}/.local/bin"
 APPLICATIONS_DIR="${HOME}/.local/share/applications"
 LAUNCHER_PATH="${LOCAL_BIN}/reminder-app"
 DESKTOP_PATH="${APPLICATIONS_DIR}/reminder.desktop"
-ICON_PATH="${SCRIPT_DIR}/assets/reminder_icon.svg"
+ICON_PATH="${SCRIPT_DIR}/reminder/assets/reminder_icon.svg"
 
 mkdir -p "${LOCAL_BIN}" "${APPLICATIONS_DIR}"
 

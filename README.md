@@ -169,7 +169,7 @@ pip install -r requirements.txt   # まだの場合
 
 - デスクトップエントリ: `~/.local/share/applications/reminder.desktop`
 - 起動用ランチャー: `~/.local/bin/reminder-app`
-- アイコン: `assets/reminder_icon.svg`
+- アイコン: `reminder/assets/reminder_icon.svg`
 
 > アプリ一覧に表示されない場合は、一度ログアウト/ログインするか、デスクトップ環境のキャッシュを更新してください。
 
@@ -221,13 +221,13 @@ my-task-manager/
 │   ├── config.py               # タスク一覧・設定の永続化 (JSON)
 │   ├── notifications.py        # 通知音・デスクトップ通知・アイコン設定
 │   ├── time_utils.py           # 開始までの遅延計算・定数
-│   └── theme.py                # デザイントークン（配色・フォント・余白）の一元定義
+│   ├── theme.py                # デザイントークン（配色・フォント・余白）の一元定義
+│   └── assets/
+│       └── reminder_icon.svg   # アプリ用アイコン（wheel にも同梱されるようパッケージ内に配置）
 ├── install_reminder_app.sh     # Linux 向けデスクトップエントリ生成スクリプト
 ├── requirements.txt            # 実行用依存（必須なし。cairosvg はオプション、pyproject.toml の [icon] extra 参照）
 ├── requirements-dev.txt        # 開発・テスト用依存（pytest）
 ├── pyproject.toml              # パッケージ定義・console-scripts
-├── assets/
-│   └── reminder_icon.svg       # アプリ用アイコン
 └── tests/                      # ユニットテスト（モジュール別）
 ```
 

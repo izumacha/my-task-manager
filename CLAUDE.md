@@ -42,7 +42,7 @@ python -m pytest tests                   # 全ユニットテスト
 | `reminder/time_utils.py` | 開始までの遅延計算・定数 |
 | `reminder/cli.py` / `reminder/__main__.py` | `main()` とエントリーポイント |
 | `install_reminder_app.sh` | Linux デスクトップエントリ生成スクリプト |
-| `assets/reminder_icon.svg` | アプリアイコン |
+| `reminder/assets/reminder_icon.svg` | アプリアイコン（wheel にも同梱されるようパッケージ内に配置） |
 | `tests/test_*.py` | ユニットテスト（モジュール別） |
 | `tests/test_recurrence_contract.py` | `contract/recurrence_cases.json` を読み込み繰り返しを契約駆動で検証 |
 | `contract/recurrence_cases.json` | 言語非依存の繰り返し契約ケース（入力→期待出力の真実の源） |
