@@ -505,7 +505,7 @@ class PlannerApp:
 
     # ------------------------------------------------------------ タスク追加
 
-    def _format_scheduled_message(self, title: str, verb: str, due_dt) -> str:
+    def _format_scheduled_message(self, title: str, verb: str, due_dt: datetime.datetime) -> str:
         """開始日時が設定されたタスクの完了メッセージを組み立てる（add_to_timeline/schedule_backlog_selected で共用）。
 
         make_due は現在時刻と同分でも翌日へ繰り上げるため(秒未満の差で「過去」判定される)、
