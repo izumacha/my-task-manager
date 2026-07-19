@@ -53,7 +53,7 @@ python -m pytest tests                   # 全ユニットテスト
 - 繰り返しは「完了した時点」起点で再スケジュール（月末日・うるう年はクランプ）。Web/スマホ版も `contract/recurrence_cases.json` の同一契約に従う。
 - 今日のタスクは Treeview でなく `tk.Canvas` の「デイビュー」で描画。位置・高さは分→px 換算（`HOUR_HEIGHT`）で Canvas 実サイズに依存させない。表示窓は実タスクを内包するよう広げ、罫線ラベルは実時計の正時に合わせる。
 - 入力検証は `_coerce_int()` パターン（範囲外→クランプ、非数値→デフォルト）。
-- tkinter の `StringVar` / `IntVar` はテスト用 `_DummyVar` で代替し、`_create_app()` ファクトリで Tk 無しのモック済みインスタンスを生成する。OS 依存処理は `@patch` でモックする。
+- tkinter の `StringVar` / `IntVar` はテスト用 `_DummyVar` で代替し、`AppTestCase._app()`（`tests/test_planner.py`）で Tk 無しのモック済みインスタンスを生成する。OS 依存処理は `@patch` でモックする。
 - クロスプラットフォーム: 音/通知は macOS(`afplay`)・Windows(`winsound`)・Linux(`notify-send`+`tk.bell()`)を `platform.system()` で分岐し、必ずフォールバックを用意する。`cairosvg` はオプション依存で `ImportError` 時 graceful degradation。`strftime` の `%-d` 等の非移植指定子は使わない。
 
 ---
