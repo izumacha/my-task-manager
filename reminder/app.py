@@ -21,6 +21,7 @@ import datetime
 import logging
 import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Callable
 
 from .config import Prefs, load_prefs, load_tasks, save_prefs, save_tasks
 from .notifications import _set_window_icon, play_notification_sound
@@ -52,6 +53,7 @@ from .timeline import (
     STATUS_DONE,
     STATUS_NOW,
     STATUS_PAST,
+    TimelineRow,
     build_day_timeline,
     carry_over_overdue,
     format_duration,
@@ -561,7 +563,7 @@ class PlannerApp:
     def _find(self, task_id: str | None) -> Task | None:
         return next((t for t in self.tasks if t.id == task_id), None)  # task_id が一致するタスクをリストから探して返す（見つからなければ None）
 
-    def _selected(self, tree) -> Task | None:
+    def _selected(self, tree: ttk.Treeview) -> Task | None:
         selection = tree.selection()  # Treeview で現在選択されている行の ID 一覧を取得する
         if not selection:  # 何も選択されていなければ
             return None  # None を返して呼び出し元に知らせる
@@ -758,7 +760,9 @@ class PlannerApp:
         height = int(content_bottom + theme.CAL_PAD_TOP)  # 下余白を加えた Canvas 総高さを計算する
         cv.configure(scrollregion=(0, 0, width, height))  # Canvas のスクロール可能領域を確定させる
 
-    def _draw_time_grid(self, cv, window_start, window_end, width, y_of) -> None:
+    def _draw_time_grid(self, cv: tk.Canvas, window_start: datetime.datetime,
+                        window_end: datetime.datetime, width: float,
+                        y_of: Callable[[datetime.datetime], float]) -> None:
         """正時（と 30 分）の罫線・時刻ラベルを、実際の時刻に合わせて描く。
 
         起床が 07:30 のような非正時でも、罫線は実際の時計の正時に引き、
@@ -780,7 +784,7 @@ class PlannerApp:
             t += datetime.timedelta(hours=1)  # 次の正時に進む
 
     @staticmethod
-    def _assign_lanes(task_rows, min_visual_minutes: float = 0.0) -> dict[str, int]:
+    def _assign_lanes(task_rows: list[TimelineRow], min_visual_minutes: float = 0.0) -> dict[str, int]:
         """重なり合うタスクを横レーンに割り当てる（task.id → レーン番号）。
 
         Args:
@@ -805,8 +809,9 @@ class PlannerApp:
             active.append((visual_end, lane))  # 見た目の終了時刻とレーン番号をアクティブリストに追加する
         return lanes  # タスク ID → レーン番号の辞書を返す
 
-    def _draw_task_block(self, cv, row, y_of, lane: int, lane_w: float,
-                         area_left: float) -> None:
+    def _draw_task_block(self, cv: tk.Canvas, row: TimelineRow,
+                         y_of: Callable[[datetime.datetime], float], lane: int,
+                         lane_w: float, area_left: float) -> None:
         """1 件のタスクを Any Planner 風のカードとして描く。
 
         左端にカテゴリ色のストライプ、その右に丸いチェックボックス（完了は ✓ 入り）、
@@ -901,14 +906,17 @@ class PlannerApp:
         return bg, fg, fg  # 通常（未来タスク）はカテゴリ色の配色を返す
 
     @staticmethod
-    def _rounded_rect(cv, x0, y0, x1, y1, r, **kw):
+    def _rounded_rect(cv: tk.Canvas, x0: float, y0: float, x1: float, y1: float,
+                      r: float, **kw) -> int:
         """角丸長方形を polygon (smooth) で描く。"""
         r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)  # 角丸半径を長方形のサイズに収まるよう制限する
         pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
                x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]  # 角丸多角形の制御点リストを作る
         return cv.create_polygon(pts, smooth=True, **kw)  # 制御点をなめらかにつないで角丸長方形を描く
 
-    def _draw_now_line(self, cv, now, window_start, window_end, y_of, width) -> None:
+    def _draw_now_line(self, cv: tk.Canvas, now: datetime.datetime,
+                       window_start: datetime.datetime, window_end: datetime.datetime,
+                       y_of: Callable[[datetime.datetime], float], width: float) -> None:
         """現在時刻を示す横線（now ライン）を描く。"""
         if now < window_start or now > window_end:  # 現在時刻が表示ウィンドウ外なら
             return  # now ラインを描かずに処理を終える
