@@ -99,7 +99,7 @@ class PlannerApp:
         # カレンダー（デイビュー）の選択状態と描画幅。
         # 選択は Treeview ではなく「クリックされたブロックの task.id」で管理する。
         self._tl_selected: str | None = None
-        self._tl_width: int = 460  # <Configure> で実幅に更新する
+        self._tl_width: int = theme.TIMELINE_PANEL_WIDTH  # 初期描画幅はテーマの寸法トークンを使う（<Configure> で実幅に更新する）
         # クリック判定用のブロック矩形（_render_timeline で毎回作り直す）。
         self._tl_blocks: list = []
 
@@ -241,14 +241,14 @@ class PlannerApp:
         self.root.rowconfigure(0, weight=1)  # 行 0 をウィンドウ高さに合わせて伸縮させる
         try:
             self.root.configure(bg=theme.BG)  # ウィンドウ全体の背景色をテーマ色に設定する
-            self.root.minsize(900, 540)  # ウィンドウを縮小できる最小サイズを設定する
+            self.root.minsize(theme.WINDOW_MIN_WIDTH, theme.WINDOW_MIN_HEIGHT)  # ウィンドウを縮小できる最小サイズをテーマの寸法トークンで設定する
         except Exception as exc:  # 起動を止めないため広めに捕捉する（fail-safe）
             # 原因調査できるよう例外の内容も一緒にデバッグログへ残す
             logging.debug("ルートウィンドウの背景設定に失敗しました: %s", exc)
 
         self._apply_style()  # ttk のスタイル（配色・フォント）を一括で設定する
 
-        frame = ttk.Frame(self.root, padding=18, style="App.TFrame")  # アプリ全体を包む外側フレームを作る
+        frame = ttk.Frame(self.root, padding=theme.PAD_LG, style="App.TFrame")  # アプリ全体を包む外側フレームを作る（内側余白はテーマの余白トークン）
         frame.grid(sticky="nsew")  # フレームをウィンドウの四辺いっぱいに配置する
         frame.columnconfigure(0, weight=3, uniform="cols")  # 左列（タイムライン）を比率 3 で伸縮させる
         frame.columnconfigure(1, weight=2, uniform="cols")  # 右列（バックログ）を比率 2 で伸縮させる
@@ -266,23 +266,23 @@ class PlannerApp:
     def _build_header(self, frame: ttk.Frame) -> None:
         """日付・起床/就寝・統計を表示するヘッダ（row 0）。"""
         header = ttk.Frame(frame, style="Header.TFrame")  # ヘッダ全体を包むフレームを作る
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))  # ヘッダを 2 列幅で横いっぱいに配置する
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, theme.SPACE_XXL))  # ヘッダを 2 列幅で横いっぱいに配置する（下の間隔はテーマのトークン）
         header.columnconfigure(2, weight=1)  # 起床/就寝スピンボックスを右寄せにするため列 2 を伸縮させる
 
         ttk.Label(header, text="📅", style="Date.TLabel").grid(row=0, column=0, sticky="w")  # カレンダーアイコンを左端に配置する
         ttk.Label(header, textvariable=self.date_var, style="Date.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(6, 0))  # 今日の日付ラベルをアイコンの右に配置する
+            row=0, column=1, sticky="w", padx=(theme.SPACE_SM, 0))  # 今日の日付ラベルをアイコンの右に配置する（間隔はテーマのトークン）
 
         rng = ttk.Frame(header, style="Header.TFrame")  # 起床/就寝スピンボックスをまとめるフレームを作る
-        rng.grid(row=0, column=2, sticky="e", padx=(16, 12))  # 起床/就寝フレームをヘッダ右側に配置する
+        rng.grid(row=0, column=2, sticky="e", padx=(theme.HEADER_GROUP_GAP, theme.SPACE_XL))  # 起床/就寝フレームをヘッダ右側に配置する（左右の間隔はテーマのトークン）
         ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)  # 起床ラベルを左詰めで配置する
-        self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=0, to=23,
-                                     width=3, format="%02.0f", command=self._on_range_change)  # 起床時刻を 0〜23 時で選ぶスピンボックスを作る
-        self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))  # 起床スピンボックスをラベルの右に配置する
+        self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=HOUR_MIN, to=HOUR_MAX,
+                                     width=3, format="%02.0f", command=self._on_range_change)  # 起床時刻を HOUR_MIN〜HOUR_MAX（0〜23 時）で選ぶスピンボックスを作る（範囲は time_utils の定数を正本とする）
+        self.wake_menu.pack(side=tk.LEFT, padx=(theme.SPACE_XS, theme.SPACE_XL))  # 起床スピンボックスをラベルの右に配置する（間隔はテーマのトークン）
         ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)  # 就寝ラベルを左詰めで配置する
-        self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=0, to=23,
-                                      width=3, format="%02.0f", command=self._on_range_change)  # 就寝時刻を 0〜23 時で選ぶスピンボックスを作る
-        self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))  # 就寝スピンボックスをラベルの右に配置する
+        self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=HOUR_MIN, to=HOUR_MAX,
+                                      width=3, format="%02.0f", command=self._on_range_change)  # 就寝時刻を HOUR_MIN〜HOUR_MAX（0〜23 時）で選ぶスピンボックスを作る（範囲は time_utils の定数を正本とする）
+        self.sleep_menu.pack(side=tk.LEFT, padx=(theme.SPACE_XS, 0))  # 就寝スピンボックスをラベルの右に配置する（間隔はテーマのトークン）
         self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 起床スピンボックスからフォーカスが外れたとき設定を反映する
         self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 就寝スピンボックスからフォーカスが外れたとき設定を反映する
 
@@ -291,38 +291,39 @@ class PlannerApp:
 
     def _build_input(self, frame: ttk.Frame) -> None:
         """タスク追加フォーム（row 1）。白いカードにまとめる。"""
-        card = ttk.Frame(frame, style="Card.TFrame", padding=12)  # タスク追加フォームを包むカードフレームを作る
-        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))  # カードを 2 列幅で横いっぱいに配置する
+        card = ttk.Frame(frame, style="Card.TFrame", padding=theme.PAD_SM)  # タスク追加フォームを包むカードフレームを作る（内側余白はテーマのトークン）
+        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, theme.SPACE_XXL))  # カードを 2 列幅で横いっぱいに配置する（下の間隔はテーマのトークン）
         card.columnconfigure(0, weight=1)  # タスク名入力欄が残りの幅を占めるよう列 0 を伸縮させる
 
         self.title_entry = ttk.Entry(card, textvariable=self.title_var, font=theme.FONT_BASE)  # タスク名のテキスト入力欄を作る
-        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=3)  # タスク名入力欄を横いっぱいに配置する
+        self.title_entry.grid(row=0, column=0, sticky="ew", padx=(0, theme.SPACE_LG),
+                              ipady=theme.ENTRY_IPADY)  # タスク名入力欄を横いっぱいに配置する（右の間隔と内側余白はテーマのトークン）
 
         opts = ttk.Frame(card, style="Card.TFrame")  # 時刻・所要時間・繰り返し・ボタンをまとめるフレームを作る
         opts.grid(row=0, column=1)  # オプションフレームをタスク名入力欄の右に配置する
         ttk.Label(opts, text="⏰ 開始", style="Card.TLabel").pack(side=tk.LEFT)  # 「開始」ラベルを左詰めで配置する
         self.hour_menu = ttk.Spinbox(opts, textvariable=self.hour_var, from_=HOUR_MIN, to=HOUR_MAX,
                                      wrap=True, width=3, format="%02.0f")  # 開始時刻の「時」スピンボックスを作る
-        self.hour_menu.pack(side=tk.LEFT, padx=(4, 0))  # 「時」スピンボックスをラベルの右に配置する
+        self.hour_menu.pack(side=tk.LEFT, padx=(theme.SPACE_XS, 0))  # 「時」スピンボックスをラベルの右に配置する（間隔はテーマのトークン）
         ttk.Label(opts, text=":", style="Card.TLabel").pack(side=tk.LEFT)  # 時と分の区切り「:」を配置する
         self.minute_menu = ttk.Spinbox(opts, textvariable=self.minute_var, from_=MINUTE_MIN,
                                        to=MINUTE_MAX, wrap=True, width=3, format="%02.0f")  # 開始時刻の「分」スピンボックスを作る
-        self.minute_menu.pack(side=tk.LEFT, padx=(0, 12))  # 「分」スピンボックスを「:」の右に配置する
+        self.minute_menu.pack(side=tk.LEFT, padx=(0, theme.SPACE_XL))  # 「分」スピンボックスを「:」の右に配置する（間隔はテーマのトークン）
         ttk.Label(opts, text="⏳ 所要(分)", style="Card.TLabel").pack(side=tk.LEFT)  # 「所要(分)」ラベルを左詰めで配置する
         self.dur_menu = ttk.Spinbox(opts, textvariable=self.dur_var, from_=MIN_DURATION,
                                     to=MAX_DURATION, increment=5, width=5)  # 所要時間（分）のスピンボックスを 5 分刻みで作る
-        self.dur_menu.pack(side=tk.LEFT, padx=(4, 12))  # 所要時間スピンボックスをラベルの右に配置する
+        self.dur_menu.pack(side=tk.LEFT, padx=(theme.SPACE_XS, theme.SPACE_XL))  # 所要時間スピンボックスをラベルの右に配置する（間隔はテーマのトークン）
         ttk.Label(opts, text="🔁 繰り返し", style="Card.TLabel").pack(side=tk.LEFT)  # 「繰り返し」ラベルを左詰めで配置する
         self.recur_menu = ttk.Combobox(opts, textvariable=self.recur_var, state="readonly",
                                        width=5, values=[RECUR_LABELS[u] for u in RECUR_UNITS])  # 繰り返し単位を選ぶドロップダウンを作る
-        self.recur_menu.pack(side=tk.LEFT, padx=(4, 0))  # 繰り返しドロップダウンをラベルの右に配置する
+        self.recur_menu.pack(side=tk.LEFT, padx=(theme.SPACE_XS, 0))  # 繰り返しドロップダウンをラベルの右に配置する（間隔はテーマのトークン）
         self.interval_menu = ttk.Spinbox(opts, textvariable=self.interval_var, from_=MIN_INTERVAL,
                                          to=MAX_INTERVAL, width=3)  # 繰り返し間隔（何回ごと）のスピンボックスを作る
-        self.interval_menu.pack(side=tk.LEFT, padx=(4, 14))  # 繰り返し間隔スピンボックスをドロップダウンの右に配置する
+        self.interval_menu.pack(side=tk.LEFT, padx=(theme.SPACE_XS, theme.SPACE_XXL))  # 繰り返し間隔スピンボックスをドロップダウンの右に配置する（間隔はテーマのトークン）
 
         ttk.Button(opts, text="＋ タイムラインへ", style="Primary.TButton",
                    command=self.add_to_timeline).pack(side=tk.LEFT)  # タイムラインへ追加するプライマリボタンを配置する
-        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(8, 0))  # あとでやるリストへ追加するボタンを配置する
+        ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(theme.SPACE_MD, 0))  # あとでやるリストへ追加するボタンを配置する（ボタン間隔はテーマのトークン）
 
     def _build_timeline(self, frame: ttk.Frame) -> None:
         """今日のカレンダー（デイビュー）（row 2, col 0）。
@@ -332,13 +333,13 @@ class PlannerApp:
         1 日表示に近い見た目で、空き時間は「ブロックが無い余白」として
         そのまま見える。
         """
-        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)  # カレンダーカード全体を包むフレームを作る
-        panel.grid(row=2, column=0, sticky="nsew", padx=(0, 9))  # カレンダーカードを左列に配置する
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=theme.PAD_MD)  # カレンダーカード全体を包むフレームを作る（内側余白はテーマのトークン）
+        panel.grid(row=2, column=0, sticky="nsew", padx=(0, theme.PANEL_GAP))  # カレンダーカードを左列に配置する（右パネルとの隙間はテーマのトークン）
         panel.columnconfigure(0, weight=1)  # カレンダー本体が横いっぱいに広がるよう列 0 を伸縮させる
         panel.rowconfigure(1, weight=1)  # Canvas 行だけをウィンドウ高さに合わせて伸縮させる
 
         ttk.Label(panel, text="🗓 今日のカレンダー", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 10))  # 「今日のカレンダー」見出しを左上に配置する
+            row=0, column=0, sticky="w", pady=(0, theme.SPACE_LG))  # 「今日のカレンダー」見出しを左上に配置する（下の間隔はテーマのトークン）
 
         body = ttk.Frame(panel, style="Card.TFrame")  # Canvas とスクロールバーをまとめるフレームを作る
         body.grid(row=1, column=0, sticky="nsew")  # Canvas フレームをカード内に伸縮配置する
@@ -356,21 +357,21 @@ class PlannerApp:
         self.timeline_tree.bind("<Configure>", self._on_timeline_resize)  # サイズ変更イベントをリサイズハンドラに紐づける
 
         actions = ttk.Frame(panel, style="Card.TFrame")  # カレンダー操作ボタンをまとめるフレームを作る
-        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))  # 操作ボタンをカレンダー下に左詰めで配置する
+        actions.grid(row=2, column=0, sticky="w", pady=(theme.SPACE_XL, 0))  # 操作ボタンをカレンダー下に左詰めで配置する（上の間隔はテーマのトークン）
         ttk.Button(actions, text="✓ 完了", style="Primary.TButton",
                    command=self.complete_timeline_selected).pack(side=tk.LEFT)  # 選択タスクを完了するプライマリボタンを配置する
-        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(8, 0))  # 選択タスクをバックログへ移動するボタンを配置する
-        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(8, 0))  # 選択タスクを削除するボタンを配置する
+        ttk.Button(actions, text="あとでへ", command=self.move_to_backlog).pack(side=tk.LEFT, padx=(theme.SPACE_MD, 0))  # 選択タスクをバックログへ移動するボタンを配置する（ボタン間隔はテーマのトークン）
+        ttk.Button(actions, text="🗑 削除", command=self.delete_timeline_selected).pack(side=tk.LEFT, padx=(theme.SPACE_MD, 0))  # 選択タスクを削除するボタンを配置する（ボタン間隔はテーマのトークン）
 
     def _build_backlog(self, frame: ttk.Frame) -> None:
         """あとでやるリスト（row 2, col 1）。白いカードにまとめる。"""
-        panel = ttk.Frame(frame, style="Card.TFrame", padding=14)  # あとでやるカード全体を包むフレームを作る
+        panel = ttk.Frame(frame, style="Card.TFrame", padding=theme.PAD_MD)  # あとでやるカード全体を包むフレームを作る（内側余白はテーマのトークン）
         panel.grid(row=2, column=1, sticky="nsew")  # グリッドの右下エリアに上下左右いっぱい配置する
         panel.columnconfigure(0, weight=1)  # 列 0 を横幅に合わせて伸縮させる
         panel.rowconfigure(1, weight=1)  # 行 1（リスト行）を縦幅に合わせて伸縮させる
 
         ttk.Label(panel, text="🌙 あとでやる", style="Heading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 10))  # 「あとでやる」セクションの見出しラベルを配置する
+            row=0, column=0, sticky="w", pady=(0, theme.SPACE_LG))  # 「あとでやる」セクションの見出しラベルを配置する（下の間隔はテーマのトークン）
 
         body = ttk.Frame(panel, style="Card.TFrame")  # リスト部分を包む内部フレームを作る
         body.grid(row=1, column=0, sticky="nsew")  # 見出しの下に上下左右いっぱい配置する
@@ -381,9 +382,9 @@ class PlannerApp:
         self.backlog_tree.heading("title", text="タスク")  # タスク名列の見出しを設定する
         self.backlog_tree.heading("dur", text="所要")  # 所要時間列の見出しを設定する
         self.backlog_tree.heading("info", text="繰り返し")  # 繰り返し設定列の見出しを設定する
-        self.backlog_tree.column("title", width=170, anchor="w")  # タスク名列の幅と文字揃えを設定する
-        self.backlog_tree.column("dur", width=70, anchor="center", stretch=False)  # 所要時間列の幅を固定して中央揃えにする
-        self.backlog_tree.column("info", width=80, anchor="center", stretch=False)  # 繰り返し列の幅を固定して中央揃えにする
+        self.backlog_tree.column("title", width=theme.BACKLOG_COL_TITLE_WIDTH, anchor="w")  # タスク名列の幅（テーマの寸法トークン）と文字揃えを設定する
+        self.backlog_tree.column("dur", width=theme.BACKLOG_COL_DUR_WIDTH, anchor="center", stretch=False)  # 所要時間列の幅（テーマの寸法トークン）を固定して中央揃えにする
+        self.backlog_tree.column("info", width=theme.BACKLOG_COL_RECUR_WIDTH, anchor="center", stretch=False)  # 繰り返し列の幅（テーマの寸法トークン）を固定して中央揃えにする
         self.backlog_tree.grid(row=0, column=0, sticky="nsew")  # Treeview を body フレームに上下左右いっぱい配置する
         sb = ttk.Scrollbar(body, orient="vertical", command=self.backlog_tree.yview)  # Treeview の縦スクロールバーを作る
         self.backlog_tree.configure(yscrollcommand=sb.set)  # スクロールバーと Treeview を連動させる
@@ -391,11 +392,11 @@ class PlannerApp:
         self._configure_row_tags(self.backlog_tree)  # 提案色・カテゴリ色のタグを Treeview に設定する
 
         actions = ttk.Frame(panel, style="Card.TFrame")  # 操作ボタンを並べるフレームを作る
-        actions.grid(row=2, column=0, sticky="w", pady=(12, 0))  # ボタン行をリストの下に左詰めで配置する
+        actions.grid(row=2, column=0, sticky="w", pady=(theme.SPACE_XL, 0))  # ボタン行をリストの下に左詰めで配置する（上の間隔はテーマのトークン）
         ttk.Button(actions, text="＋ 予定に追加", style="Primary.TButton",
                    command=self.schedule_backlog_selected).pack(side=tk.LEFT)  # バックログタスクをタイムラインに追加するプライマリボタンを配置する
-        ttk.Button(actions, text="✓ 完了", command=self.complete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))  # バックログタスクを完了するボタンを右隣に配置する
-        ttk.Button(actions, text="🗑 削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(8, 0))  # バックログタスクを削除するボタンを右隣に配置する
+        ttk.Button(actions, text="✓ 完了", command=self.complete_backlog_selected).pack(side=tk.LEFT, padx=(theme.SPACE_MD, 0))  # バックログタスクを完了するボタンを右隣に配置する（ボタン間隔はテーマのトークン）
+        ttk.Button(actions, text="🗑 削除", command=self.delete_backlog_selected).pack(side=tk.LEFT, padx=(theme.SPACE_MD, 0))  # バックログタスクを削除するボタンを右隣に配置する（ボタン間隔はテーマのトークン）
 
     def _configure_row_tags(self, tree: ttk.Treeview) -> None:
         """バックログ（Treeview）の行タグ（提案色・カテゴリ色）を設定する。
@@ -412,7 +413,7 @@ class PlannerApp:
     def _build_status(self, frame: ttk.Frame) -> None:
         """ステータスラベル（row 3）。"""
         ttk.Label(frame, textvariable=self.status_var, style="Status.TLabel").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))  # ステータスメッセージを表示するラベルを画面下部に配置する
+            row=3, column=0, columnspan=2, sticky="w", pady=(theme.SPACE_MD, 0))  # ステータスメッセージを表示するラベルを画面下部に配置する（上の間隔はテーマのトークン）
 
     # ------------------------------------------------------------ 入力正規化
 
@@ -497,8 +498,8 @@ class PlannerApp:
         stored_sleep_hour = self._sleep_min() // 60  # 保存済みの就寝時刻から「時」を取り出す（比較とフォールバックに使う）
         # 非数値・空欄のときは 0 ではなく保存済みの「時」へフォールバックする
         # （空欄のままタブ移動しただけで "00:00" が書き込まれて設定が壊れるのを防ぐ）
-        wake = self._coerce_int(self.wake_var.get(), 0, 23, default=stored_wake_hour)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
-        sleep = self._coerce_int(self.sleep_var.get(), 0, 23, default=stored_sleep_hour)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
+        wake = self._coerce_int(self.wake_var.get(), HOUR_MIN, HOUR_MAX, default=stored_wake_hour)  # 起床時刻（時）の入力値を HOUR_MIN〜HOUR_MAX（0〜23）にクランプして取得する
+        sleep = self._coerce_int(self.sleep_var.get(), HOUR_MIN, HOUR_MAX, default=stored_sleep_hour)  # 就寝時刻（時）の入力値を HOUR_MIN〜HOUR_MAX（0〜23）にクランプして取得する
         self.wake_var.set(f"{wake:02d}")  # クランプ後の起床時刻を 2 桁で入力欄に書き戻す
         self.sleep_var.set(f"{sleep:02d}")  # クランプ後の就寝時刻を 2 桁で入力欄に書き戻す
         # 注: 保存値が不正な文字列でも _wake_min()/_sleep_min() が既定値に読み替えるため実害はなく、

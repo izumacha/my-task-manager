@@ -65,5 +65,31 @@ class CategoryColorDotTests(unittest.TestCase):
         self.assertIn(theme.category_color("読書"), theme.CATEGORY_COLORS)
 
 
+class LayoutTokenTests(unittest.TestCase):
+    """レイアウト（寸法・余白・間隔）トークンの健全性を検証する。"""
+
+    def test_dimension_tokens_are_positive_ints(self):
+        # 寸法トークンはすべて「正の整数（ピクセル）」であること（tkinter に渡せる値）。
+        for name in ("WINDOW_MIN_WIDTH", "WINDOW_MIN_HEIGHT", "TIMELINE_PANEL_WIDTH",
+                     "BACKLOG_COL_TITLE_WIDTH", "BACKLOG_COL_DUR_WIDTH",
+                     "BACKLOG_COL_RECUR_WIDTH", "PAD_LG", "PAD_MD", "PAD_SM",
+                     "SPACE_XS", "SPACE_SM", "SPACE_MD", "SPACE_LG", "SPACE_XL",
+                     "SPACE_XXL", "HEADER_GROUP_GAP", "PANEL_GAP", "ENTRY_IPADY"):
+            value = getattr(theme, name)  # トークン名から実際の値を取り出す
+            self.assertIsInstance(value, int, name)  # 値が整数であることを確認する
+            self.assertGreater(value, 0, name)  # 値が正（0 より大きい）であることを確認する
+
+    def test_spacing_scale_is_monotonic(self):
+        # 間隔スケールは名前の序列どおり単調増加であること（XS < SM < ... < XXL）。
+        scale = (theme.SPACE_XS, theme.SPACE_SM, theme.SPACE_MD,
+                 theme.SPACE_LG, theme.SPACE_XL, theme.SPACE_XXL)  # 小さい順に並べたスケールのタプル
+        self.assertEqual(list(scale), sorted(scale))  # 並びが昇順ソート結果と一致することを確認する
+
+    def test_padding_scale_is_monotonic(self):
+        # 余白スケールも名前の序列どおり単調増加であること（SM < MD < LG）。
+        pads = (theme.PAD_SM, theme.PAD_MD, theme.PAD_LG)  # 小さい順に並べた余白トークンのタプル
+        self.assertEqual(list(pads), sorted(pads))  # 並びが昇順ソート結果と一致することを確認する
+
+
 if __name__ == "__main__":
     unittest.main()
