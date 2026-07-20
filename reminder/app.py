@@ -43,6 +43,7 @@ from .task import (
     MIN_DURATION,
     Task,
     _coerce_duration,
+    _coerce_interval,
     build_next_task,
     make_due,
 )
@@ -477,7 +478,10 @@ class PlannerApp:
 
     def _input_recurrence(self) -> tuple[str, int]:
         """入力欄の繰り返し単位・間隔を返す。"""
-        interval = self._coerce_int(self.interval_var.get(), MIN_INTERVAL, MAX_INTERVAL)  # 入力欄の繰り返し間隔を取得して有効範囲にクランプする
+        # Task.__post_init__ と同じ _coerce_interval を使い、非数値は MIN_INTERVAL に
+        # フォールバックする（task.py が唯一の参照元。CLAUDE.md §6 の定数一元管理。
+        # _input_duration の _coerce_duration 再利用と同じパターンに揃える）
+        interval = _coerce_interval(self.interval_var.get())  # 入力欄の繰り返し間隔を取得して有効範囲にクランプする
         self.interval_var.set(str(interval))  # クランプ後の間隔を入力欄に書き戻す
         return unit_for_label(self.recur_var.get()), interval  # 繰り返し単位の内部コードと間隔のタプルを返す
 
