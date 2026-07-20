@@ -276,12 +276,12 @@ class PlannerApp:
         rng = ttk.Frame(header, style="Header.TFrame")  # 起床/就寝スピンボックスをまとめるフレームを作る
         rng.grid(row=0, column=2, sticky="e", padx=(16, 12))  # 起床/就寝フレームをヘッダ右側に配置する
         ttk.Label(rng, text="🌅 起床").pack(side=tk.LEFT)  # 起床ラベルを左詰めで配置する
-        self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=0, to=23,
-                                     width=3, format="%02.0f", command=self._on_range_change)  # 起床時刻を 0〜23 時で選ぶスピンボックスを作る
+        self.wake_menu = ttk.Spinbox(rng, textvariable=self.wake_var, from_=HOUR_MIN, to=HOUR_MAX,
+                                     width=3, format="%02.0f", command=self._on_range_change)  # 起床時刻を HOUR_MIN〜HOUR_MAX（0〜23 時）で選ぶスピンボックスを作る（範囲は time_utils の定数を正本とする）
         self.wake_menu.pack(side=tk.LEFT, padx=(4, 12))  # 起床スピンボックスをラベルの右に配置する
         ttk.Label(rng, text="🌙 就寝").pack(side=tk.LEFT)  # 就寝ラベルを左詰めで配置する
-        self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=0, to=23,
-                                      width=3, format="%02.0f", command=self._on_range_change)  # 就寝時刻を 0〜23 時で選ぶスピンボックスを作る
+        self.sleep_menu = ttk.Spinbox(rng, textvariable=self.sleep_var, from_=HOUR_MIN, to=HOUR_MAX,
+                                      width=3, format="%02.0f", command=self._on_range_change)  # 就寝時刻を HOUR_MIN〜HOUR_MAX（0〜23 時）で選ぶスピンボックスを作る（範囲は time_utils の定数を正本とする）
         self.sleep_menu.pack(side=tk.LEFT, padx=(4, 0))  # 就寝スピンボックスをラベルの右に配置する
         self.wake_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 起床スピンボックスからフォーカスが外れたとき設定を反映する
         self.sleep_menu.bind("<FocusOut>", lambda _e: self._on_range_change())  # 就寝スピンボックスからフォーカスが外れたとき設定を反映する
@@ -497,8 +497,8 @@ class PlannerApp:
         stored_sleep_hour = self._sleep_min() // 60  # 保存済みの就寝時刻から「時」を取り出す（比較とフォールバックに使う）
         # 非数値・空欄のときは 0 ではなく保存済みの「時」へフォールバックする
         # （空欄のままタブ移動しただけで "00:00" が書き込まれて設定が壊れるのを防ぐ）
-        wake = self._coerce_int(self.wake_var.get(), 0, 23, default=stored_wake_hour)  # 起床時刻（時）の入力値を 0〜23 にクランプして取得する
-        sleep = self._coerce_int(self.sleep_var.get(), 0, 23, default=stored_sleep_hour)  # 就寝時刻（時）の入力値を 0〜23 にクランプして取得する
+        wake = self._coerce_int(self.wake_var.get(), HOUR_MIN, HOUR_MAX, default=stored_wake_hour)  # 起床時刻（時）の入力値を HOUR_MIN〜HOUR_MAX（0〜23）にクランプして取得する
+        sleep = self._coerce_int(self.sleep_var.get(), HOUR_MIN, HOUR_MAX, default=stored_sleep_hour)  # 就寝時刻（時）の入力値を HOUR_MIN〜HOUR_MAX（0〜23）にクランプして取得する
         self.wake_var.set(f"{wake:02d}")  # クランプ後の起床時刻を 2 桁で入力欄に書き戻す
         self.sleep_var.set(f"{sleep:02d}")  # クランプ後の就寝時刻を 2 桁で入力欄に書き戻す
         # 注: 保存値が不正な文字列でも _wake_min()/_sleep_min() が既定値に読み替えるため実害はなく、
