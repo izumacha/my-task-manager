@@ -55,6 +55,7 @@ from .timeline import (
     STATUS_NOW,
     STATUS_PAST,
     TimelineRow,
+    backlog_tasks,
     build_day_timeline,
     carry_over_overdue,
     format_duration,
@@ -988,7 +989,10 @@ class PlannerApp:
         slot = max_free_slot(self.tasks, today,
                              self._wake_min(), self._sleep_min(), now)  # 今日の最大連続空き枠（分）を計算する（基準時刻も _get_now() に揃える）
         suggestions = {t.id for t in suggest_for_free_time(self.tasks, slot)}  # 空き枠に収まる提案タスクの ID セットを作る
-        for task in [t for t in self.tasks if not t.is_scheduled and not t.completed]:  # 未予定かつ未完了のタスクをループする
+        # timeline.backlog_tasks() が「あとでやる」判定（未予定かつ未完了）の唯一の参照元。
+        # suggest_for_free_time() 内でも同じ関数を使っており、ここで条件式を再実装すると
+        # 判定基準が 2 箇所に分散してしまう（CLAUDE.md §6 DRY・一元管理）ため関数を再利用する。
+        for task in backlog_tasks(self.tasks):  # 未予定かつ未完了のタスクをループする
             if task.id in suggestions:  # このタスクが提案対象なら
                 title, tag = f"✨ {task.title}", "suggest"  # タイトルに ✨ を付けて提案タグを設定する
             else:  # 提案対象でないなら
