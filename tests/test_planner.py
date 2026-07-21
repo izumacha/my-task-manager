@@ -223,6 +223,12 @@ class AddToTimelineTests(AppTestCase):
         app, _ = self._app()
         fixed = datetime.datetime(2026, 6, 1, 12, 0)
         app._get_now = lambda: fixed
+        # 回帰修正: _app() はアプリ構築を実時計基準で行うため、_auto_start_default が
+        # たまたま実行時刻の既定値（例: 実行時刻が 9:55〜10:00 なら "10:00"）になっている
+        # ことがある。下で "10:00" を明示的に設定する前に、それと衝突しない値へ
+        # リセットしておかないと、_refresh_stale_start_default() が「未変更」と誤判定して
+        # 上書きしてしまい、実行時刻帯によってテストが不安定になる（既知のフレーキーテスト）
+        app._auto_start_default = (0, 0)
         app.title_var.set("朝活")
         app.hour_var.set("10")
         app.minute_var.set("00")
