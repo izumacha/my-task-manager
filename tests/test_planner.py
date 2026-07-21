@@ -130,7 +130,7 @@ class InputNormalizeTests(AppTestCase):
         self.assertEqual(app._input_duration(), 24 * 60)
 
     def test_duration_non_numeric_defaults(self):
-        # 非数値の所要時間は task.py の _coerce_duration と同じ DEFAULT_DURATION に
+        # 非数値の所要時間は task.py の coerce_duration と同じ DEFAULT_DURATION に
         # フォールバックする（UI 入力と tasks.json 復元でフォールバック値を統一）。
         app, _ = self._app()
         app.dur_var.set("ab")

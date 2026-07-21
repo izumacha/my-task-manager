@@ -14,7 +14,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 
 from .task import Task
-from .timeline import DEFAULT_SLEEP_MIN, DEFAULT_WAKE_MIN, min_to_hhmm
+from .timeline import DEFAULT_SLEEP_MIN, DEFAULT_WAKE_MIN, hhmm_to_min, min_to_hhmm
 
 _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "reminder")  # 設定ファイルを置くディレクトリのパスを組み立てる
 _TASKS_PATH = os.path.join(_CONFIG_DIR, "tasks.json")  # タスク一覧を保存するJSONファイルのフルパスを定義する
@@ -88,7 +88,30 @@ def load_prefs() -> Prefs:
         prefs.completions = []  # 空リストにリセットして不正な値を捨てる
     else:
         prefs.completions = [c for c in prefs.completions if isinstance(c, str)]  # 文字列でない要素を除去して文字列リストだけ保持する
+    # /code-review ultra 指摘対応: wake/sleep は completions と異なり検証されておらず、
+    # 不正値（数値・null・範囲外の "HH:MM" 等）が settings.json に混入すると、
+    # PlannerApp._wake_min()/_sleep_min() 側の例外処理で毎回デフォルトへ黙って
+    # フォールバックし続け（ログに残らない）、しかも save_prefs() のたびに壊れた
+    # 値がそのまま書き戻され続けてしまう。他のフォールバックと同じく警告ログを
+    # 残した上で、ここで一度だけ正規の "HH:MM" 文字列に正規化する
+    prefs.wake = _coerce_hhmm(prefs.wake, DEFAULT_WAKE_MIN, "wake")  # 起床時刻を検証し、不正なら既定値へ正規化する
+    prefs.sleep = _coerce_hhmm(prefs.sleep, DEFAULT_SLEEP_MIN, "sleep")  # 就寝時刻を検証し、不正なら既定値へ正規化する
     return prefs  # 正常に読み込んだ設定を返す
+
+
+def _coerce_hhmm(value: object, default_minutes: int, field_name: str) -> str:
+    """設定値を "HH:MM" 形式の文字列として検証し、不正なら警告ログを残して既定値へ正規化する。"""
+    if isinstance(value, str):  # 文字列型であれば形式・範囲の検証を試みる
+        try:
+            hhmm_to_min(value)  # "HH:MM" として解釈できるか（0〜23時・0〜59分か）を検証する
+            return value  # 検証を通過した値はそのまま採用する
+        except ValueError:
+            pass  # 形式・範囲が不正な場合は下の警告ログ＋既定値フォールバックへ進む
+    # 文字列以外の型（数値・null・リスト等）、または "HH:MM" として解釈できない文字列
+    logging.warning(
+        "設定ファイルの %s が不正なため既定値を使用します (%s): %r", field_name, _SETTINGS_PATH, value
+    )  # 他のフォールバックと同じく、警告ログに壊れた値を残す（§6: 例外を握り潰さない）
+    return min_to_hhmm(default_minutes)  # 既定値を "HH:MM" 文字列に整形して返す
 
 
 def save_prefs(prefs: Prefs) -> None:

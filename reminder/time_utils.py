@@ -31,6 +31,39 @@ STATUS_IDLE = "タスクを追加してください。"  # 何もしていない
 # に従い削除する（theme.py の NOW_FG 削除と同じ経緯）。
 
 
+def coerce_int(raw: object, min_value: int, max_value: int, default: int | None = None) -> int:
+    """任意の値を整数に変換し、[min_value, max_value] にクランプして返す。
+
+    /code-review ultra 指摘対応: 以前は task.py の coerce_interval/coerce_duration と
+    app.py の PlannerApp._coerce_int が、ほぼ同一の「int変換→失敗ならフォールバック→
+    min/maxでクランプ」ロジックを別々に実装しており（DRY 違反）、例外の捕捉範囲も
+    (TypeError, ValueError) と (TypeError, ValueError, OverflowError) で食い違っていた。
+    GUI 非依存のこのモジュールに一元化し、両方から再利用する。
+
+    変換できない値（非数値の文字列や None など）が渡された場合、default が
+    指定されていればその値を（範囲内にクランプした上で）採用し、未指定なら
+    min_value を返す（例: 起床/就寝の「時」は 0 ではなく保存済みの値に戻したい）。
+
+    Args:
+        raw: 変換対象の値（文字列・数値など任意の型）。
+        min_value: クランプ下限。
+        max_value: クランプ上限。
+        default: 変換失敗時のフォールバック値（省略時は min_value）。
+
+    Returns:
+        [min_value, max_value] にクランプされた整数。
+    """
+    try:
+        value = int(raw)  # type: ignore[arg-type]  # 文字列や float など任意の型を整数に変換する
+    except (TypeError, ValueError, OverflowError):
+        # float('inf')/float('-inf') は int() が TypeError/ValueError ではなく
+        # OverflowError を送出するため、他の変換不能値と同様にここで捕捉する
+        if default is None:  # フォールバック先の指定がなければ
+            return min_value  # 従来どおり最小値を返す（非数値のフォールバック）
+        value = default  # 指定されたフォールバック値を採用する（この後の行で範囲内にクランプする）
+    return max(min_value, min(max_value, value))  # 最小・最大の範囲に収めて返す
+
+
 def delay_ms_until(now: datetime.datetime, target: datetime.datetime) -> int:
     """現在日時から目標日時までの待機時間（ミリ秒）を返す。
 
