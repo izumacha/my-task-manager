@@ -60,10 +60,10 @@ python -m pytest tests                   # 全ユニットテスト
 
 - スタック形態は「ネイティブ GUI（tkinter）」: 公開 URL は適用外、**スクショ＋デモ GIF 必須**（OS のスクリーンショット / 画面録画で手動撮影）。
 - 撮影対象スクリーンショット（`docs/screenshots/` 配下、ダミータスクのみ使用・実予定や個人情報を写さない）:
-  1. `dayview-default.png` — デイビュー（`tk.Canvas` の 1 日タイムライン）
-  2. `calendar-month.png` — カレンダー表示（あとでやるリスト含む）
-  3. `task-edit-recurrence.png` — タスク追加/編集ダイアログ（繰り返し設定）
-  - 任意の追加候補: `stats-summary.png` — 完了数・連続達成日数の統計
+  1. `dayview-default.png` — デイビュー（`tk.Canvas` の 1 日タイムライン＋あとでやるリスト）
+  2. `task-edit-recurrence.png` — タスク入力カード（繰り返し単位ドロップダウンを展開した状態）
+  3. `stats-summary.png` — タスク完了後の統計（今日の完了数・連続達成日数・空き時間）とステータスバーの再スケジュール表示
+  - 注: 月カレンダー表示（`calendar-month.png`）は未実装のため撮影対象外。月表示を実装したらこのリストへ追加する。
 - デモ GIF: 「タスク追加 → 完了 → 繰り返しタスクの自動再スケジュール」フロー 1 本（10MB 以下）。
 
 ---
