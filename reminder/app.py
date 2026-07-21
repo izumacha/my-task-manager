@@ -236,7 +236,7 @@ class PlannerApp:
 
     def _build_ui(self) -> None:
         """ウィンドウとすべての UI コンポーネントを構築する。"""
-        self.root.title("my-task-manager")  # ウィンドウのタイトルバーにアプリ名を設定する
+        self.root.title(theme.APP_NAME)  # ウィンドウのタイトルバーにアプリ名を設定する
         _set_window_icon(self.root)  # ウィンドウのアイコン画像を設定する
         self.root.columnconfigure(0, weight=1)  # 列 0 をウィンドウ幅に合わせて伸縮させる
         self.root.rowconfigure(0, weight=1)  # 行 0 をウィンドウ高さに合わせて伸縮させる
@@ -780,7 +780,8 @@ class PlannerApp:
         while t <= window_end:  # 表示終了時刻まで 1 時間ずつ繰り返す
             y = y_of(t)  # この正時の y 座標を計算する
             cv.create_line(theme.CAL_GUTTER, y, width, y, fill=theme.GRID_LINE)  # 正時の水平罫線を描く
-            cv.create_text(theme.CAL_GUTTER - 8, y, anchor="e", text=f"{t.hour:02d}:00",
+            cv.create_text(theme.CAL_GUTTER - theme.CAL_LABEL_GAP, y, anchor="e",
+                           text=f"{t.hour:02d}:00",
                            fill=theme.GRID_LABEL, font=theme.FONT_SMALL)  # 罫線の左に時刻ラベル（HH:00）を描く
             half = t + datetime.timedelta(minutes=30)  # 30 分後の時刻を計算する
             if half < window_end:  # 30 分線が表示範囲内なら
@@ -838,7 +839,8 @@ class PlannerApp:
         # カード本体（角丸）とカテゴリ色の左ストライプ。
         self._rounded_rect(cv, x0, y0, x1, y1, r=theme.CAL_RADIUS, fill=fill,
                            outline=outline, width=ow, tags=("task", task.id))  # タスクカード本体（角丸長方形）を描く
-        self._rounded_rect(cv, x0 + 3, y0 + 4, x0 + 3 + theme.CAL_STRIPE_W, y1 - 4,
+        self._rounded_rect(cv, x0 + theme.CAL_STRIPE_INSET_X, y0 + theme.CAL_STRIPE_INSET_Y,
+                           x0 + theme.CAL_STRIPE_INSET_X + theme.CAL_STRIPE_W, y1 - theme.CAL_STRIPE_INSET_Y,
                            r=theme.CAL_STRIPE_W / 2, fill=accent, outline=accent,
                            tags=("task", task.id))  # カードの左端にカテゴリ色のストライプを描く
 
@@ -854,17 +856,20 @@ class PlannerApp:
         # チェックによる x1 側のクランプが無いことによる回帰）。
         # x1 側でクランプしたうえで、極端に狭いブロックでは x0 側（左端）に
         # 寄せて、自分のブロック内(x0 起点)に留まるようにする。
-        cb_cx = max(x0 + r + 3, min(x0 + theme.CAL_STRIPE_W + 16, x1 - r - 3))  # 自ブロックの x 範囲に収まるようクランプする
-        cb_cy = (y0 + 16) if tall else (y0 + y1) / 2  # 高いカードは上寄り、低いカードは縦中央にチェックボックスを置く
+        cb_cx = max(x0 + r + theme.CAL_CHECK_HIT_PAD,
+                    min(x0 + theme.CAL_STRIPE_W + theme.CAL_CHECK_OFFSET_X,
+                        x1 - r - theme.CAL_CHECK_HIT_PAD))  # 自ブロックの x 範囲に収まるようクランプする
+        cb_cy = (y0 + theme.CAL_CHECK_OFFSET_Y) if tall else (y0 + y1) / 2  # 高いカードは上寄り、低いカードは縦中央にチェックボックスを置く
         # cb_cx のクランプだけでは不十分な場合がある: ブロック幅 (x1-x0) がチェック
-        # ボックスの判定直径 2*(r+3) 未満まで狭まる（同時刻に 15 件以上重なる等）と、
-        # cb_cx を x0+r+3 に寄せても cb_box の右端 (cb_cx+r+3) は x1 を超えたままになり、
-        # 判定領域が再び隣のレーンへ流出して別タスクの完了を誤爆しうる（cb_cx を
-        # x1-r-3 側へ寄せれば今度は左端が x0 を割る、対称の問題）。
+        # ボックスの判定直径 2*(r+CAL_CHECK_HIT_PAD) 未満まで狭まる（同時刻に 15 件
+        # 以上重なる等）と、cb_cx を x0+r+CAL_CHECK_HIT_PAD に寄せても cb_box の右端
+        # (cb_cx+r+CAL_CHECK_HIT_PAD) は x1 を超えたままになり、判定領域が再び隣の
+        # レーンへ流出して別タスクの完了を誤爆しうる（cb_cx を x1-r-CAL_CHECK_HIT_PAD
+        # 側へ寄せれば今度は左端が x0 を割る、対称の問題）。
         # そのため cb_box の左右端も x0/x1 で個別にクランプし、どれだけレーンが
         # 狭くても判定領域が自ブロックの外へ出ないことを保証する。
-        cb_box = (max(x0, cb_cx - r - 3), cb_cy - r - 3,
-                  min(x1, cb_cx + r + 3), cb_cy + r + 3)  # クリック判定用のチェックボックス領域（ブロック外へは絶対に出ない）を定義する
+        cb_box = (max(x0, cb_cx - r - theme.CAL_CHECK_HIT_PAD), cb_cy - r - theme.CAL_CHECK_HIT_PAD,
+                  min(x1, cb_cx + r + theme.CAL_CHECK_HIT_PAD), cb_cy + r + theme.CAL_CHECK_HIT_PAD)  # クリック判定用のチェックボックス領域（ブロック外へは絶対に出ない）を定義する
         if done:  # 完了済みなら
             cv.create_oval(cb_cx - r, cb_cy - r, cb_cx + r, cb_cy + r,
                            fill=accent, outline=accent, tags=("task", task.id))  # アクセント色で塗りつぶした円を描く
@@ -884,12 +889,12 @@ class PlannerApp:
         # x1 を超えうる（レーンが狭いほど顕著）。x1 を超えたまま create_text すると、
         # タイトルの描画開始位置自体が隣のレーン（隣のタスクのカード）へはみ出して
         # 表示されてしまうため、ここでも x1 側でクランプする。
-        text_x = min(cb_cx + r + 8, x1 - 8)  # ブロック右端を超えて隣のレーンへ文字が始まらないようクランプする
-        text_w = max(int(x1 - text_x - 8), 10)  # テキストの折り返し幅を計算する（最低 10px）
+        text_x = min(cb_cx + r + theme.CAL_TEXT_GAP, x1 - theme.CAL_TEXT_GAP)  # ブロック右端を超えて隣のレーンへ文字が始まらないようクランプする
+        text_w = max(int(x1 - text_x - theme.CAL_TEXT_GAP), theme.CAL_TEXT_MIN_WIDTH)  # テキストの折り返し幅を計算する（最低幅を確保）
         if tall:  # カードが十分な高さを持つなら
-            cv.create_text(text_x, y0 + 8, anchor="nw", text=title, fill=text_color,
+            cv.create_text(text_x, y0 + theme.CAL_TITLE_PAD_TOP, anchor="nw", text=title, fill=text_color,
                            font=theme.FONT_BOLD, width=text_w, tags=("task", task.id))  # タイトルをカード上部に太字で描く
-            cv.create_text(text_x, y1 - 7, anchor="sw",
+            cv.create_text(text_x, y1 - theme.CAL_TIME_PAD_BOTTOM, anchor="sw",
                            text=f"{row.start:%H:%M}–{row.end:%H:%M}", fill=text_color,
                            font=theme.FONT_SMALL, tags=("task", task.id))  # 開始〜終了時刻をカード下部に小さく描く
         else:  # カードが低くてテキスト 2 行分の高さがないなら
@@ -1100,7 +1105,7 @@ class PlannerApp:
             self._schedule_task(task, now=now)  # 判定に使った時刻で通知ジョブを再登録する
             return  # 今は通知を出さずに処理を終える
         play_notification_sound(self.root, task.title)  # 通知音を再生する
-        messagebox.showinfo("my-task-manager", f"⏰ {task.title}")  # 開始時刻を知らせるポップアップダイアログを表示する
+        messagebox.showinfo(theme.APP_NAME, f"⏰ {task.title}")  # 開始時刻を知らせるポップアップダイアログを表示する
         self._refresh()  # タイムライン・バックログ・統計を再描画する
         self.status_var.set(f"「{task.title}」の開始時刻になりました。")  # 開始時刻になったことをステータスバーに表示する
 

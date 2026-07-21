@@ -7,6 +7,8 @@ import subprocess
 import threading
 import tkinter as tk
 
+from . import theme  # アプリ名（APP_NAME）などの共有トークンを参照する
+
 
 def _set_window_icon(root: tk.Tk) -> None:
     """SVG アイコンをウィンドウに設定する。変換ライブラリが無い場合は無視する。"""
@@ -82,7 +84,7 @@ def _send_linux_notification(body: str = "") -> None:
     # 最初の位置引数で解析を止めず行全体からオプションを拾うため、"--" が無いと
     # ユーザー入力のタスク名（body）が "-t" 等のフラグとして誤解釈される恐れがある。
     # "--" 以降を厳密に位置引数（タイトル・本文）として渡し、引数注入を防ぐ。
-    args = ["notify-send", "--urgency=normal", "--", "プランナー"]  # "--" でオプション解析を終端した notify-send の基本引数リスト
+    args = ["notify-send", "--urgency=normal", "--", theme.APP_NAME]  # "--" でオプション解析を終端した notify-send の基本引数リスト
     if body:  # 本文テキストが指定されている場合
         args.append(body)  # 引数リストに本文を追加する（"--" 以降なのでフラグ誤認されない）
     try:

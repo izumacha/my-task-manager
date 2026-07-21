@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import tkinter as tk
 
+from reminder import theme
 from reminder.notifications import (
     _play_macos_sound,
     _ring_bell,
@@ -39,7 +40,7 @@ class PlayNotificationSoundTests(unittest.TestCase):
         root = Mock()
         play_notification_sound(root, "会議の準備")
         mock_popen.assert_called_once_with(
-            ["notify-send", "--urgency=normal", "--", "プランナー", "会議の準備"],
+            ["notify-send", "--urgency=normal", "--", theme.APP_NAME, "会議の準備"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -89,7 +90,7 @@ class SendLinuxNotificationTests(unittest.TestCase):
     def test_invokes_notify_send_without_body(self, mock_popen):
         _send_linux_notification()
         mock_popen.assert_called_once_with(
-            ["notify-send", "--urgency=normal", "--", "プランナー"],
+            ["notify-send", "--urgency=normal", "--", theme.APP_NAME],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -98,7 +99,7 @@ class SendLinuxNotificationTests(unittest.TestCase):
     def test_invokes_notify_send_with_body(self, mock_popen):
         _send_linux_notification("掃除")
         mock_popen.assert_called_once_with(
-            ["notify-send", "--urgency=normal", "--", "プランナー", "掃除"],
+            ["notify-send", "--urgency=normal", "--", theme.APP_NAME, "掃除"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
