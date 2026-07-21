@@ -25,6 +25,7 @@ from .recurrence import (
     RECUR_UNITS,
     next_occurrence,
 )
+from .time_utils import coerce_int
 
 # 期限日時の保存・復元に使うフォーマット（秒まで保持）
 ISO_FMT = "%Y-%m-%dT%H:%M:%S"
@@ -40,26 +41,22 @@ MAX_DURATION = 24 * 60
 DEFAULT_DURATION = 30
 
 
-def _coerce_interval(value: object) -> int:
-    """繰り返し間隔を [MIN_INTERVAL, MAX_INTERVAL] の整数にクランプする。"""
-    try:
-        n = int(value)  # type: ignore[arg-type]  # 任意の型を整数に変換する（文字列や float も対応）
-    except (TypeError, ValueError, OverflowError):
-        # float('inf')/float('-inf') は int() が TypeError/ValueError ではなく
-        # OverflowError を送出するため、他の変換不能値と同様にここで捕捉する
-        return MIN_INTERVAL  # 変換できない値（None・空文字など）は最小値 1 を返す
-    return max(MIN_INTERVAL, min(MAX_INTERVAL, n))  # 1〜99 の範囲に収まるようクランプして返す
+def coerce_interval(value: object) -> int:
+    """繰り返し間隔を [MIN_INTERVAL, MAX_INTERVAL] の整数にクランプする。
+
+    /code-review ultra 指摘対応: app.py からも import して使うため、モジュール内限定を
+    意味する先頭アンダースコアを外し、time_utils.coerce_int（共通ヘルパー）へ委譲する。
+    """
+    return coerce_int(value, MIN_INTERVAL, MAX_INTERVAL)  # 変換できなければ最小値 1 を返す
 
 
-def _coerce_duration(value: object) -> int:
-    """所要時間（分）を [MIN_DURATION, MAX_DURATION] の整数にクランプする。"""
-    try:
-        n = int(value)  # type: ignore[arg-type]  # 任意の型を整数（分数）に変換する
-    except (TypeError, ValueError, OverflowError):
-        # float('inf')/float('-inf') は int() が TypeError/ValueError ではなく
-        # OverflowError を送出するため、他の変換不能値と同様にここで捕捉する
-        return DEFAULT_DURATION  # 変換できない値は既定の所要時間 30 分を返す
-    return max(MIN_DURATION, min(MAX_DURATION, n))  # 5〜1440 分の範囲に収まるようクランプして返す
+def coerce_duration(value: object) -> int:
+    """所要時間（分）を [MIN_DURATION, MAX_DURATION] の整数にクランプする。
+
+    /code-review ultra 指摘対応: app.py からも import して使うため、モジュール内限定を
+    意味する先頭アンダースコアを外し、time_utils.coerce_int（共通ヘルパー）へ委譲する。
+    """
+    return coerce_int(value, MIN_DURATION, MAX_DURATION, default=DEFAULT_DURATION)  # 変換できなければ既定の所要時間 30 分を返す
 
 
 @dataclass
@@ -95,8 +92,8 @@ class Task:
         # 不正な単位・間隔・所要時間は安全側へ正規化する
         if self.recur_unit not in RECUR_UNITS:
             self.recur_unit = RECUR_NONE
-        self.recur_interval = _coerce_interval(self.recur_interval)
-        self.duration_min = _coerce_duration(self.duration_min)
+        self.recur_interval = coerce_interval(self.recur_interval)
+        self.duration_min = coerce_duration(self.duration_min)
         # completed は厳密な真偽値に正規化する。tasks.json の手編集等で
         # 文字列 "false"（真値）が入ると、未完了タスクが完了扱いになり通知も
         # 完了記録も行われない「死んだタスク」になってしまうため、実際の

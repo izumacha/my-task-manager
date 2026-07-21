@@ -42,9 +42,9 @@ from .task import (
     MAX_DURATION,
     MIN_DURATION,
     Task,
-    _coerce_duration,
-    _coerce_interval,
     build_next_task,
+    coerce_duration,
+    coerce_interval,
     make_due,
 )
 from .timeline import (
@@ -74,6 +74,7 @@ from .time_utils import (
     MINUTE_MIN,
     REFRESH_INTERVAL_MS,
     STATUS_IDLE,
+    coerce_int,
     delay_ms_until,
 )
 
@@ -118,8 +119,8 @@ class PlannerApp:
         self.dur_var = tk.StringVar(value=str(DEFAULT_DURATION))  # 所要時間（分）の入力フォームに紐づく変数
         self.recur_var = tk.StringVar(value=RECUR_LABELS[RECUR_NONE])  # 繰り返し単位の選択に紐づく変数（初期値は「繰り返しなし」）
         self.interval_var = tk.StringVar(value=str(MIN_INTERVAL))  # 繰り返し間隔の入力フォームに紐づく変数
-        self.wake_var = tk.StringVar(value=str(self._wake_min() // 60))  # 起床時刻（時）の設定に紐づく変数
-        self.sleep_var = tk.StringVar(value=str(self._sleep_min() // 60))  # 就寝時刻（時）の設定に紐づく変数
+        self.wake_var = tk.StringVar(value=f"{self._wake_min() // 60:02d}")  # 起床時刻（時）の設定に紐づく変数（2桁ゼロ埋めで初期表示）
+        self.sleep_var = tk.StringVar(value=f"{self._sleep_min() // 60:02d}")  # 就寝時刻（時）の設定に紐づく変数（2桁ゼロ埋めで初期表示）
         self.date_var = tk.StringVar()  # ヘッダに表示する今日の日付文字列に紐づく変数
         self.stats_var = tk.StringVar()  # ヘッダに表示する統計文字列に紐づく変数
         self.status_var = tk.StringVar(value=STATUS_IDLE)  # 画面下部のステータスバーに紐づく変数（文言は time_utils の定数を正本とする）
@@ -423,14 +424,12 @@ class PlannerApp:
 
         default を指定すると、非数値のときに最小値ではなくその値へフォールバックする
         （例: 起床/就寝の「時」は 0 ではなく保存済みの値に戻したい）。
+
+        /code-review ultra 指摘対応: task.py の coerce_interval/coerce_duration と
+        ほぼ同一のロジックを個別実装していた（DRY 違反）ため、time_utils.coerce_int
+        （共通ヘルパー）への薄いラッパーにする。
         """
-        try:
-            value = int(raw)  # 文字列を整数に変換する（失敗したら except 節へ）
-        except (TypeError, ValueError):
-            if default is None:  # フォールバック先の指定がなければ
-                return min_value  # 従来どおり最小値を返す（非数値のフォールバック）
-            value = default  # 指定されたフォールバック値を採用する（この後の行で範囲内にクランプする）
-        return max(min_value, min(max_value, value))  # 最小・最大の範囲に収めて返す
+        return coerce_int(raw, min_value, max_value, default)
 
     def _refresh_stale_start_default(self) -> None:
         """既定開始時刻の入力欄が、起動時または前回自動補完時のまま未変更なら、
@@ -472,18 +471,18 @@ class PlannerApp:
 
     def _input_duration(self) -> int:
         """入力欄の所要時間（分）を正規化して返す。"""
-        # Task.__post_init__ と同じ _coerce_duration を使い、非数値は DEFAULT_DURATION に
+        # Task.__post_init__ と同じ coerce_duration を使い、非数値は DEFAULT_DURATION に
         # フォールバックする（task.py が唯一の参照元。CLAUDE.md §6 の定数一元管理）。
-        d = _coerce_duration(self.dur_var.get())  # 入力欄の所要時間を取得して正規化する
+        d = coerce_duration(self.dur_var.get())  # 入力欄の所要時間を取得して正規化する
         self.dur_var.set(str(d))  # クランプ後の値を入力欄に書き戻す
         return d  # 正規化した所要時間（分）を返す
 
     def _input_recurrence(self) -> tuple[str, int]:
         """入力欄の繰り返し単位・間隔を返す。"""
-        # Task.__post_init__ と同じ _coerce_interval を使い、非数値は MIN_INTERVAL に
+        # Task.__post_init__ と同じ coerce_interval を使い、非数値は MIN_INTERVAL に
         # フォールバックする（task.py が唯一の参照元。CLAUDE.md §6 の定数一元管理。
-        # _input_duration の _coerce_duration 再利用と同じパターンに揃える）
-        interval = _coerce_interval(self.interval_var.get())  # 入力欄の繰り返し間隔を取得して有効範囲にクランプする
+        # _input_duration の coerce_duration 再利用と同じパターンに揃える）
+        interval = coerce_interval(self.interval_var.get())  # 入力欄の繰り返し間隔を取得して有効範囲にクランプする
         self.interval_var.set(str(interval))  # クランプ後の間隔を入力欄に書き戻す
         return unit_for_label(self.recur_var.get()), interval  # 繰り返し単位の内部コードと間隔のタプルを返す
 

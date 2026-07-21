@@ -52,6 +52,32 @@ class PrefsPersistenceTests(unittest.TestCase):
             self.assertEqual(loaded.wake, "08:00")
             self.assertEqual(loaded.completions, ["2026-06-06T09:00:00"])
 
+    def test_load_sanitizes_invalid_wake_and_sleep(self):
+        # /code-review ultra 指摘対応: wake/sleep に不正値（数値・範囲外・非文字列）が
+        # 混入していても既定値へフォールバックし、警告ログが残ること（§6 例外を握り潰さない）
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"wake": 700, "sleep": "25:99"}, f)
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 self.assertLogs(level="WARNING") as logs:
+                loaded = load_prefs()
+            self.assertEqual(loaded.wake, "07:00")
+            self.assertEqual(loaded.sleep, "23:00")
+            self.assertTrue(any("wake" in msg for msg in logs.output))
+            self.assertTrue(any("sleep" in msg for msg in logs.output))
+
+    def test_load_keeps_valid_wake_and_sleep(self):
+        # 正しい "HH:MM" 形式の値はそのまま採用され、既定値へ上書きされないこと
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"wake": "06:15", "sleep": "22:45"}, f)
+            with patch("reminder.config._SETTINGS_PATH", path):
+                loaded = load_prefs()
+            self.assertEqual(loaded.wake, "06:15")
+            self.assertEqual(loaded.sleep, "22:45")
+
     def test_load_ignores_unknown_keys(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "settings.json")
