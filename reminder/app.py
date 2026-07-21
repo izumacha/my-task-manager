@@ -861,10 +861,11 @@ class PlannerApp:
                         x1 - r - theme.CAL_CHECK_HIT_PAD))  # 自ブロックの x 範囲に収まるようクランプする
         cb_cy = (y0 + theme.CAL_CHECK_OFFSET_Y) if tall else (y0 + y1) / 2  # 高いカードは上寄り、低いカードは縦中央にチェックボックスを置く
         # cb_cx のクランプだけでは不十分な場合がある: ブロック幅 (x1-x0) がチェック
-        # ボックスの判定直径 2*(r+3) 未満まで狭まる（同時刻に 15 件以上重なる等）と、
-        # cb_cx を x0+r+3 に寄せても cb_box の右端 (cb_cx+r+3) は x1 を超えたままになり、
-        # 判定領域が再び隣のレーンへ流出して別タスクの完了を誤爆しうる（cb_cx を
-        # x1-r-3 側へ寄せれば今度は左端が x0 を割る、対称の問題）。
+        # ボックスの判定直径 2*(r+CAL_CHECK_HIT_PAD) 未満まで狭まる（同時刻に 15 件
+        # 以上重なる等）と、cb_cx を x0+r+CAL_CHECK_HIT_PAD に寄せても cb_box の右端
+        # (cb_cx+r+CAL_CHECK_HIT_PAD) は x1 を超えたままになり、判定領域が再び隣の
+        # レーンへ流出して別タスクの完了を誤爆しうる（cb_cx を x1-r-CAL_CHECK_HIT_PAD
+        # 側へ寄せれば今度は左端が x0 を割る、対称の問題）。
         # そのため cb_box の左右端も x0/x1 で個別にクランプし、どれだけレーンが
         # 狭くても判定領域が自ブロックの外へ出ないことを保証する。
         cb_box = (max(x0, cb_cx - r - theme.CAL_CHECK_HIT_PAD), cb_cy - r - theme.CAL_CHECK_HIT_PAD,
