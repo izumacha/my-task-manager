@@ -139,15 +139,24 @@ def build_day_timeline(
     # 終了が当日の起床時刻より後（＝日をまたいで今も続いている）タスクを含める。
     # これを含めないと、日またぎタスクが翌日の空き時間計算から完全に抜け落ち、
     # 実際は占有中の時間帯を「空き」として過大計上してしまう。
+    # さらに、起床時刻より前に終わる深夜跨ぎタスク（例: 前日 23:00 開始・90 分 →
+    # 当日 00:30 終了）は end_dt > day_start に掛からないが、carry_over_overdue の
+    # 実行中保護（end_dt > now は繰り越さない）により前日にも残らないため、
+    # 0:00〜終了の間デイビューから完全に消えてしまう。carry_over_overdue と同じ
+    # end_dt > now 基準で「今まさに実行中」のタスクも当日に表示する。ただし now
+    # 基準は「表示対象 date が now の属するプランナー日」のときだけ適用する
+    # （過去・未来の日付を渡されたとき、実行中タスクが無関係な日に混入するのを防ぐ）。
     # 注意: 遡るのは「前のプランナー日」1 日分だけ（タスクは高々 2 日にまたがる前提）。
     # これは task.MAX_DURATION が 24*60 分（1 日分）に収まっていることに依存しており、
     # 上限を緩める場合はこの日またぎ判定も 2 日以上を遡るよう見直す必要がある。
+    now_is_on_date = planner_day(now, wake_min, sleep_min) == date  # 表示対象日が「現在時刻の属するプランナー日」かどうかを判定する
     todays = sorted(
         (t for t in tasks
          if t.is_scheduled and (
              planner_day(t.due_dt, wake_min, sleep_min) == date  # このプランナー日に属するタスク
              or (planner_day(t.due_dt, wake_min, sleep_min) == prev_date  # 前のプランナー日に属し
-                 and t.end_dt > day_start)  # かつ終了が当日の起床時刻より後（日をまたいで継続中）のタスク
+                 and (t.end_dt > day_start  # 終了が当日の起床時刻より後（日をまたいで継続中）か
+                      or (now_is_on_date and t.end_dt > now)))  # 当日ビューでまだ終了していない（起床前に終わる深夜跨ぎの実行中）タスク
          )),
         key=lambda t: t.due_dt,  # 開始日時の昇順に並べる
     )
@@ -302,6 +311,8 @@ def carry_over_overdue(
             # 上の day_start 判定は「起床時刻より前に終わる」深夜跨ぎタスクを守れない
             # （例: 22:30 開始・120 分 → 翌 00:30 終了のタスクは 00:15 の時点でまだ実行中）。
             # 現在時刻 now が分かっている場合は、終了前のタスクを実行中とみなして繰り越さない。
+            # build_day_timeline も同じ end_dt > now 基準で実行中の深夜跨ぎタスクを当日に
+            # 表示するため、「繰り越されず、かつ表示もされない」空白は生じない。
             if now is not None and task.end_dt > now:  # 現在時刻が渡されていて、タスクがまだ終了していない場合
                 continue  # 実行中なので繰り越さずに次のタスクへ進む
             new_start = _calendar_dt(today, start.time(), wake_min, sleep_min)  # 今日の同時刻を暦日として計算する

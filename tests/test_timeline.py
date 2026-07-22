@@ -191,6 +191,39 @@ class BuildTimelineTests(unittest.TestCase):
         self.assertEqual(free_minutes_today(tasks, next_day, 7 * 60, 23 * 60, now), 900)
         self.assertEqual(max_free_slot(tasks, next_day, 7 * 60, 23 * 60, now), 900)
 
+    def test_cross_midnight_running_task_visible_before_wake(self):
+        # 前日 23:00 開始・90分（当日 00:30 終了）のタスクは終了が当日の起床時刻
+        # （07:00）より前なので end_dt > day_start に掛からないが、深夜 00:10 に
+        # まだ実行中なら当日のデイビューに表示される（回帰テスト）。
+        # carry_over_overdue も end_dt > now の実行中保護で繰り越さないため、
+        # ここで表示しないと 0:00〜終了の間タスクがどこにも現れず消えてしまう。
+        today = datetime.date(2026, 6, 7)  # 表示対象の当日（now が属するプランナー日）
+        now = datetime.datetime(2026, 6, 7, 0, 10)  # 深夜 00:10（タスク実行中の時刻）
+        tasks = [_t("夜ふかし作業", "2026-06-06T23:00:00", 90)]  # 前日 23:00 開始〜当日 00:30 終了のタスク
+        rows = build_day_timeline(tasks, today, 7 * 60, 23 * 60, now)  # 当日のタイムラインを構築する
+        task_rows = [r for r in rows if r.kind == ROW_TASK]  # タスク行だけを抜き出す
+        self.assertEqual([r.task.title for r in task_rows], ["夜ふかし作業"])  # 実行中のタスクが表示されること
+        self.assertEqual(task_rows[0].status, STATUS_NOW)  # 「現在進行中」ステータスで表示されること
+
+    def test_cross_midnight_task_hidden_after_it_finishes(self):
+        # 同じタスクでも終了後（now=00:40）は当日ビューに表示されない。終了が起床
+        # 時刻より前なので当日の窓には掛からず、以後は carry_over_overdue が
+        # 今日への繰り越しを担う（表示と繰り越しの分担の境界を固定する回帰テスト）。
+        today = datetime.date(2026, 6, 7)  # 表示対象の当日
+        now = datetime.datetime(2026, 6, 7, 0, 40)  # タスク終了（00:30）後の深夜 00:40
+        tasks = [_t("夜ふかし作業", "2026-06-06T23:00:00", 90)]  # 前日 23:00 開始〜当日 00:30 終了のタスク
+        rows = build_day_timeline(tasks, today, 7 * 60, 23 * 60, now)  # 当日のタイムラインを構築する
+        self.assertEqual([r.task.title for r in rows if r.kind == ROW_TASK], [])  # 終了済みタスクは表示されないこと
+
+    def test_running_task_not_leaked_into_other_days_view(self):
+        # now 基準の包含は「now が属するプランナー日」の表示に限る。当日 09:00-10:00 の
+        # 実行中タスク（now=09:30）が、翌日のビューへ混入しないこと。
+        tomorrow = datetime.date(2026, 6, 8)  # 表示対象は翌日（now のプランナー日ではない）
+        now = datetime.datetime(2026, 6, 7, 9, 30)  # 当日 09:30（タスク実行中の時刻）
+        tasks = [_t("実行中", "2026-06-07T09:00:00", 60)]  # 当日 09:00 開始・60 分のタスク
+        rows = build_day_timeline(tasks, tomorrow, 7 * 60, 23 * 60, now)  # 翌日のタイムラインを構築する
+        self.assertEqual([r.task.title for r in rows if r.kind == ROW_TASK], [])  # 翌日ビューには混入しないこと
+
 
 class PlannerDayTests(unittest.TestCase):
     def test_normal_range_uses_calendar_date(self):
