@@ -19,6 +19,29 @@ from .timeline import DEFAULT_SLEEP_MIN, DEFAULT_WAKE_MIN, hhmm_to_min, min_to_h
 _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "reminder")  # 設定ファイルを置くディレクトリのパスを組み立てる
 _TASKS_PATH = os.path.join(_CONFIG_DIR, "tasks.json")  # タスク一覧を保存するJSONファイルのフルパスを定義する
 _SETTINGS_PATH = os.path.join(_CONFIG_DIR, "settings.json")  # アプリ設定を保存するJSONファイルのフルパスを定義する
+_CORRUPT_SUFFIX = ".corrupt"  # 読めないファイルを退避するときに元のパス末尾へ付ける拡張子
+
+
+def _preserve_corrupt_file(path: str) -> None:
+    """読み込めないファイルを ``path + ".corrupt"`` へ退避（改名）して保全する。
+
+    壊れた JSON を読み込めなかった場合、そのまま空データで起動すると次回の
+    save_* が壊れたファイルを新しい内容で上書きし、ユーザーが手動で直せた
+    はずのデータが完全に失われてしまう。それを防ぐため、フォールバック前に
+    元ファイルを退避先へ改名して残す（§9 fail-safe）。
+
+    方針: 退避先に前回の退避ファイルが残っている場合は**上書き**する
+    （常に「最新の壊れたファイル」を 1 つだけ残すシンプルな運用。世代管理は
+    しない）。退避自体に失敗してもアプリの起動は妨げず、警告ログだけ残して
+    続行する。
+    """
+    backup_path = path + _CORRUPT_SUFFIX  # 退避先のパス（元のパス + ".corrupt"）を組み立てる
+    try:
+        os.replace(path, backup_path)  # 壊れたファイルを退避先へ改名して保全する（既存の退避ファイルがあれば上書き）
+    except OSError as e:  # 改名に失敗した場合（権限不足・ファイルが既に無い等）
+        logging.warning("壊れたファイルの退避に失敗しました (%s → %s): %s", path, backup_path, e)  # 退避失敗も握り潰さずログに残す（§6）
+        return  # 退避できなくても読み込み処理自体は続行する（fail-safe）
+    logging.warning("読み込めないファイルを %s へ退避しました。必要ならこのファイルから手動で復旧できます。", backup_path)  # 退避先の場所をユーザーへ知らせる
 
 
 def _atomic_write_json(path: str, payload: object) -> None:
@@ -77,9 +100,12 @@ def load_prefs() -> Prefs:
         return Prefs()  # デフォルト設定を返す
     except Exception as e:  # その他のエラー（壊れたJSONなど）が発生した場合
         logging.warning("設定ファイルの読み込みに失敗しました (%s): %s", _SETTINGS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
+        _preserve_corrupt_file(_SETTINGS_PATH)  # 壊れた設定ファイルを退避し、次回 save_prefs での上書き消失を防ぐ
         return Prefs()  # デフォルト設定を返す
 
     if not isinstance(data, dict):  # 読み込んだデータが辞書でない場合（不正な形式）
+        logging.warning("設定ファイルの形式が不正です (%s): 辞書形式ではありません", _SETTINGS_PATH)  # 形式不正も黙って捨てずログに残す（§6）
+        _preserve_corrupt_file(_SETTINGS_PATH)  # 形式不正のファイルも同様に退避してから既定値へフォールバックする
         return Prefs()  # デフォルト設定を返す
 
     prefs = Prefs(**{k: v for k, v in data.items() if k in Prefs.__dataclass_fields__})  # 既知のフィールドだけを使って Prefs を生成する
@@ -131,9 +157,12 @@ def load_tasks() -> list[Task]:
         return []  # タスクが存在しないとして空リストを返す
     except Exception as e:  # その他のエラー（壊れたJSONなど）が発生した場合
         logging.warning("タスクファイルの読み込みに失敗しました (%s): %s", _TASKS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
+        _preserve_corrupt_file(_TASKS_PATH)  # 壊れたタスクファイルを退避し、次回 save_tasks での上書き消失を防ぐ
         return []  # 読み込み失敗なので空リストを返す
 
     if not isinstance(data, list):  # 読み込んだデータがリストでない場合（不正な形式）
+        logging.warning("タスクファイルの形式が不正です (%s): リスト形式ではありません", _TASKS_PATH)  # 形式不正も黙って捨てずログに残す（§6）
+        _preserve_corrupt_file(_TASKS_PATH)  # 形式不正のファイルも同様に退避してから空リストへフォールバックする
         return []  # 空リストを返して不正なデータを無視する
 
     tasks: list[Task] = []  # 読み込んだタスクを蓄積するリストを初期化する
