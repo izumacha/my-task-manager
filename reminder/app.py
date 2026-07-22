@@ -690,7 +690,7 @@ class PlannerApp:
         """
         now = self._get_now()  # 再描画全体で使う現在時刻を 1 回だけ取得する（描画の途中で時刻がずれて表示が食い違わないようにする）
         today = self._planner_today(now)  # 取得した現在時刻からプランナー日（今日の日付）を計算する
-        if self._roll_over(today):  # 繰り越し・整理が発生したなら
+        if self._roll_over(today, now):  # 繰り越し・整理が発生したなら（実行中タスク保護のため現在時刻も渡す）
             self._persist_tasks()  # 変更後のタスクリストをファイルに保存する
             # 繰り越しでタスクの開始時刻が未来へ移ったので、通知を再登録する
             # （開きっぱなしで日跨ぎしても繰り越し分が通知されるようにする）。
@@ -700,11 +700,12 @@ class PlannerApp:
         self._render_backlog(today, now)  # バックログリストを同じ現在時刻で再描画する
         self._render_stats(today, now)  # 統計ラベルを同じ現在時刻で再計算して更新する
 
-    def _roll_over(self, today: datetime.date) -> bool:
+    def _roll_over(self, today: datetime.date, now: datetime.datetime | None = None) -> bool:
         """プランナー日 today を基準に完了整理・繰り越しを行う。変化があれば True。"""
         before = len(self.tasks)  # 整理前のタスク数を記録して変化を検知するために保存する
+        now = now or self._get_now()  # 引数で現在時刻が渡されなければ _get_now() から取得する（時刻源を一元化する）
         self.tasks = prune_old_completed(self.tasks, today, self._wake_min(), self._sleep_min())  # 古い完了済みタスクを planner_day 基準でリストから除去する
-        moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min())  # 期限切れタスクを今日の起床後に繰り越し、移動件数を取得する
+        moved = carry_over_overdue(self.tasks, today, self._wake_min(), self._sleep_min(), now)  # 期限切れタスクを今日の起床後に繰り越し、移動件数を取得する（実行中タスクは now で保護）
         return moved > 0 or len(self.tasks) != before  # 繰り越しまたはタスク数に変化があれば True を返す
 
     def _render_timeline(self, today: datetime.date,
