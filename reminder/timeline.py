@@ -99,6 +99,24 @@ def planner_day(moment: datetime.datetime, wake_min: int, sleep_min: int) -> dat
     return moment.date()  # 通常は暦の日付をそのままプランナー日として返す
 
 
+def _completed_on_planner_day(
+    task: Task, date: datetime.date, wake_min: int, sleep_min: int
+) -> bool:
+    """タスクの完了日時が指定のプランナー日に属するかを返す。
+
+    完了日時が未設定・不正な形式の場合は False（属さない扱い）を返す。
+    build_day_timeline が「当日に完了した日跨ぎタスク」を当日ビューへ
+    含めるための判定に使う。
+    """
+    if not task.completed or not task.completed_at:  # 未完了、または完了日時が記録されていない場合
+        return False  # このプランナー日の完了としては扱わない
+    try:
+        done = datetime.datetime.strptime(task.completed_at, ISO_FMT)  # 完了日時の文字列を datetime に変換する
+    except (TypeError, ValueError):  # 変換に失敗した場合（不正な形式・非文字列）
+        return False  # 判定できないので「属さない」として安全側に倒す
+    return planner_day(done, wake_min, sleep_min) == date  # 完了時点のプランナー日が表示対象日と一致するかを返す
+
+
 def _task_status(task: Task, now: datetime.datetime) -> str:
     """タスク行の状態を判定する。"""
     if task.completed:  # タスクが完了済みの場合
@@ -146,6 +164,12 @@ def build_day_timeline(
     # end_dt > now 基準で「今まさに実行中」のタスクも当日に表示する。ただし now
     # 基準は「表示対象 date が now の属するプランナー日」のときだけ適用する
     # （過去・未来の日付を渡されたとき、実行中タスクが無関係な日に混入するのを防ぐ）。
+    # さらに、深夜跨ぎタスクを当日のプランナー日中に完了した場合（例: 夜間レンジ
+    # 起床 09:00 / 就寝 01:00 で前日 23:30 開始・120 分 → 就寝境界後の 01:15 に完了）、
+    # 終了時刻（01:30）を過ぎると end_dt > now にも掛からず表示から消えてしまう。
+    # prune_old_completed は「今日完了したタスクは『済』として残す」と約束し、統計も
+    # 当日分として数えるため、完了時点のプランナー日が表示対象日と一致する完了タスクは
+    # 当日に「済」カードとして表示し続ける（表示と統計・整理の食い違いを防ぐ）。
     # 注意: 遡るのは「前のプランナー日」1 日分だけ（タスクは高々 2 日にまたがる前提）。
     # これは task.MAX_DURATION が 24*60 分（1 日分）に収まっていることに依存しており、
     # 上限を緩める場合はこの日またぎ判定も 2 日以上を遡るよう見直す必要がある。
@@ -156,7 +180,8 @@ def build_day_timeline(
              planner_day(t.due_dt, wake_min, sleep_min) == date  # このプランナー日に属するタスク
              or (planner_day(t.due_dt, wake_min, sleep_min) == prev_date  # 前のプランナー日に属し
                  and (t.end_dt > day_start  # 終了が当日の起床時刻より後（日をまたいで継続中）か
-                      or (now_is_on_date and t.end_dt > now)))  # 当日ビューでまだ終了していない（起床前に終わる深夜跨ぎの実行中）タスク
+                      or (now_is_on_date and t.end_dt > now)  # 当日ビューでまだ終了していない（起床前に終わる深夜跨ぎの実行中）タスクか
+                      or _completed_on_planner_day(t, date, wake_min, sleep_min)))  # 当日のプランナー日中に完了した深夜跨ぎタスク（「済」として残す）
          )),
         key=lambda t: t.due_dt,  # 開始日時の昇順に並べる
     )

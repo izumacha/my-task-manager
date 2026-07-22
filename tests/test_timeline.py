@@ -215,6 +215,31 @@ class BuildTimelineTests(unittest.TestCase):
         rows = build_day_timeline(tasks, today, 7 * 60, 23 * 60, now)  # 当日のタイムラインを構築する
         self.assertEqual([r.task.title for r in rows if r.kind == ROW_TASK], [])  # 終了済みタスクは表示されないこと
 
+    def test_cross_midnight_completed_task_stays_visible_after_end(self):
+        # 夜間レンジ（起床 09:00 / 就寝 01:00）で前日 23:30 開始・120 分
+        # （当日 01:30 終了）のタスクを当日 01:15 に完了した場合、終了時刻
+        # （01:30）を過ぎても当日ビューに「済」カードとして残ること（回帰テスト）。
+        # prune_old_completed は「今日完了したタスクは残す」と約束し、統計も
+        # 当日分として数えるのに、表示だけが消える食い違いを防ぐ。
+        today = datetime.date(2026, 6, 7)  # 表示対象の当日（完了時点のプランナー日）
+        now = datetime.datetime(2026, 6, 7, 1, 45)  # タスク終了（01:30）後の深夜 01:45
+        tasks = [_t("夜ふかし作業", "2026-06-06T23:30:00", 120,
+                    completed=True, completed_at="2026-06-07T01:15:00")]  # 前日 23:30 開始〜当日 01:30 終了・01:15 完了のタスク
+        rows = build_day_timeline(tasks, today, 9 * 60, 1 * 60, now)  # 当日のタイムラインを構築する
+        task_rows = [r for r in rows if r.kind == ROW_TASK]  # タスク行だけを抜き出す
+        self.assertEqual([r.task.title for r in task_rows], ["夜ふかし作業"])  # 完了済みタスクが表示され続けること
+        self.assertEqual(task_rows[0].status, STATUS_DONE)  # 「済」ステータスで表示されること
+
+    def test_cross_midnight_task_completed_on_previous_day_not_leaked(self):
+        # 同じ深夜跨ぎタスクでも、完了時点のプランナー日が前日（就寝境界 01:00 より前の
+        # 00:50 完了 → 前日扱い）の場合は、当日ビューへ「済」として混入しないこと。
+        today = datetime.date(2026, 6, 7)  # 表示対象の当日
+        now = datetime.datetime(2026, 6, 7, 2, 0)  # 就寝境界（01:00）を過ぎた深夜 02:00
+        tasks = [_t("夜ふかし作業", "2026-06-06T23:30:00", 60,
+                    completed=True, completed_at="2026-06-07T00:50:00")]  # 前日 23:30 開始・前日プランナー日中（00:50）に完了したタスク
+        rows = build_day_timeline(tasks, today, 9 * 60, 1 * 60, now)  # 当日のタイムラインを構築する
+        self.assertEqual([r.task.title for r in rows if r.kind == ROW_TASK], [])  # 前日完了のタスクは当日ビューに混入しないこと
+
     def test_running_task_not_leaked_into_other_days_view(self):
         # now 基準の包含は「now が属するプランナー日」の表示に限る。当日 09:00-10:00 の
         # 実行中タスク（now=09:30）が、翌日のビューへ混入しないこと。

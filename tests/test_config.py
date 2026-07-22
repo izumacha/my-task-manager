@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from reminder import config
 from reminder.config import Prefs, load_prefs, load_tasks, save_prefs, save_tasks
 from reminder.recurrence import RECUR_WEEKLY
 from reminder.task import Task
@@ -296,6 +297,86 @@ class CorruptFilePreservationTests(unittest.TestCase):
                  self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
                 self.assertEqual(load_tasks(), [])  # 読み込みは空リストへフォールバックする
             self.assertTrue(os.path.exists(tasks_path + ".corrupt"))  # 形式不正のファイルも退避されていること
+
+
+class TransientIoErrorTests(unittest.TestCase):
+    """一時的な I/O エラー（OSError）を「壊れたファイル」と誤認して隔離・上書きしないことのテスト。"""
+
+    def setUp(self):
+        # モジュールレベルの保存拒否フラグが他のテストへ漏れないよう、前後で毎回クリアする
+        config._failed_load_paths.clear()  # テスト開始前に保存拒否の記録を空にする
+        self.addCleanup(config._failed_load_paths.clear)  # テスト終了後にも保存拒否の記録を空へ戻す
+
+    def test_oserror_on_tasks_read_returns_empty_without_quarantine(self):
+        # 権限不足などの OSError では .corrupt へ退避（改名）せず、健全なファイルを
+        # 無傷のまま残して空リストへフォールバックすること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            healthy = [{"title": "健全", "due": "2026-06-06T09:00:00"}]  # 中身は正しい JSON（健全なデータ）を用意する
+            with open(tasks_path, "w", encoding="utf-8") as f:  # 健全なファイルを書き込み用に開く
+                json.dump(healthy, f)  # 健全な内容を書き込む
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("builtins.open", side_effect=PermissionError("denied")), \
+                 self.assertLogs(level="WARNING") as logs:  # open が権限エラーを起こす状況を再現しつつ警告ログを捕捉する
+                self.assertEqual(load_tasks(), [])  # 読み込みは空リストへフォールバックする
+            self.assertFalse(os.path.exists(tasks_path + ".corrupt"))  # 退避ファイルが作られていない（隔離されない）こと
+            with open(tasks_path, encoding="utf-8") as f:  # 元のファイルを開き直す
+                self.assertEqual(json.load(f), healthy)  # 健全な内容が無傷のまま残っていること
+            self.assertTrue(any("I/Oエラー" in msg for msg in logs.output))  # I/O エラーとして警告ログに残ること
+
+    def test_oserror_on_prefs_read_returns_defaults_without_quarantine(self):
+        # 設定ファイルも同様に、OSError では退避せず既定値へフォールバックし、
+        # その後の save_prefs による上書きも拒否されること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")  # テスト用の設定ファイルパスを組み立てる
+            with open(path, "w", encoding="utf-8") as f:  # 健全な設定ファイルを書き込み用に開く
+                json.dump({"wake": "06:30", "sleep": "22:00"}, f)  # 健全な設定内容を書き込む
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # 設定ファイルのパスをテスト用に差し替える
+                with patch("builtins.open", side_effect=OSError(5, "I/O error")), \
+                     self.assertLogs(level="WARNING"):  # open が I/O エラーを起こす状況を再現する
+                    self.assertEqual(load_prefs().wake, "07:00")  # 読み込みは既定値へフォールバックする
+                self.assertFalse(os.path.exists(path + ".corrupt"))  # 退避ファイルが作られていない（隔離されない）こと
+                with self.assertLogs(level="WARNING") as logs:  # 保存拒否の警告ログを捕捉する
+                    save_prefs(Prefs(wake="05:00"))  # 既定値ベースの設定で保存を試みる
+                self.assertTrue(any("中止" in msg for msg in logs.output))  # 保存が中止された旨がログに残ること
+            with open(path, encoding="utf-8") as f:  # 保存試行後の元ファイルを開く
+                self.assertEqual(json.load(f)["wake"], "06:30")  # 健全な設定が上書きされずに残っていること
+
+    def test_save_tasks_refused_after_failed_load_until_next_successful_load(self):
+        # OSError で読み込みに失敗した後は save_tasks が健全なファイルを上書きせず、
+        # 再び読み込みに成功したら保存拒否が解除されること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            healthy = [{"title": "健全", "due": "2026-06-06T09:00:00"}]  # 守られるべき健全なデータを用意する
+            with open(tasks_path, "w", encoding="utf-8") as f:  # 健全なファイルを書き込み用に開く
+                json.dump(healthy, f)  # 健全な内容を書き込む
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # タスクファイルのパスをテスト用に差し替える
+                with patch("builtins.open", side_effect=OSError(5, "I/O error")), \
+                     self.assertLogs(level="WARNING"):  # open が I/O エラーを起こす状況を再現する
+                    self.assertEqual(load_tasks(), [])  # 読み込みは空リストへフォールバックする
+                with self.assertLogs(level="WARNING") as logs:  # 保存拒否の警告ログを捕捉する
+                    save_tasks([Task(title="新規", due="2026-06-07T09:00:00")])  # 空データからの保存を試みる
+                self.assertTrue(any("中止" in msg for msg in logs.output))  # 保存が中止された旨がログに残ること
+                with open(tasks_path, encoding="utf-8") as f:  # 保存試行後の元ファイルを開く
+                    self.assertEqual(json.load(f), healthy)  # 健全な内容が上書きされずに残っていること
+                # 一時エラーが解消して再び読み込みに成功すれば、保存拒否は解除される
+                self.assertEqual([t.title for t in load_tasks()], ["健全"])  # 通常の読み込みは成功する
+                save_tasks([Task(title="新規", due="2026-06-07T09:00:00")])  # 成功後の保存は拒否されない
+                self.assertEqual([t.title for t in load_tasks()], ["新規"])  # 保存した新しい内容が読み込めること
+
+    def test_decode_error_still_quarantines(self):
+        # 壊れた JSON（デコードエラー）は従来どおり .corrupt へ退避されること
+        # （OSError の扱いを変えても隔離の挙動が退化していないことの確認）
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            with open(tasks_path, "w", encoding="utf-8") as f:  # 壊れたファイルを書き込み用に開く
+                f.write("{ this is not json")  # JSON として解釈できない内容を書き込む
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
+                self.assertEqual(load_tasks(), [])  # 読み込みは空リストへフォールバックする
+            self.assertTrue(os.path.exists(tasks_path + ".corrupt"))  # 壊れたファイルは退避されていること
 
 
 class AtomicWriteDurabilityTests(unittest.TestCase):
