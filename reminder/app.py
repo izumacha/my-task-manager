@@ -261,7 +261,6 @@ class PlannerApp:
         self._build_backlog(frame)  # row 2 col 1  # あとでやるリストを組み立てる
         self._build_status(frame)   # row 3  # ステータスバーを組み立てる
 
-        self.root.bind("<Return>", lambda _e: self.add_to_timeline())  # Enter キーでタスクをタイムラインに追加できるようにする
         self.title_entry.focus_set()  # 起動直後にタスク名入力欄にフォーカスを当てる
 
     def _build_header(self, frame: ttk.Frame) -> None:
@@ -325,6 +324,13 @@ class PlannerApp:
         ttk.Button(opts, text="＋ タイムラインへ", style="Primary.TButton",
                    command=self.add_to_timeline).pack(side=tk.LEFT)  # タイムラインへ追加するプライマリボタンを配置する
         ttk.Button(opts, text="あとでへ", command=self.add_to_backlog).pack(side=tk.LEFT, padx=(theme.SPACE_MD, 0))  # あとでやるリストへ追加するボタンを配置する（ボタン間隔はテーマのトークン）
+
+        # Enter キーでの「タイムラインへ追加」はタスク入力カードの入力欄だけにバインドする。
+        # root へ束縛すると、起床/就寝スピンボックスなど無関係なウィジェットで Enter を
+        # 押しただけでタスクが追加されてしまうため（誤発火の防止）。
+        for widget in (self.title_entry, self.hour_menu, self.minute_menu,
+                       self.dur_menu, self.recur_menu, self.interval_menu):  # タスク入力カードの各入力ウィジェットについてループする
+            widget.bind("<Return>", lambda _e: self.add_to_timeline())  # その入力欄で Enter キーを押すとタスクをタイムラインへ追加する
 
     def _build_timeline(self, frame: ttk.Frame) -> None:
         """今日のカレンダー（デイビュー）（row 2, col 0）。
