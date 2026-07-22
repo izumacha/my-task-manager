@@ -167,13 +167,20 @@ def load_tasks() -> list[Task]:
 
     tasks: list[Task] = []  # 読み込んだタスクを蓄積するリストを初期化する
     seen_ids: set[str] = set()  # 重複IDを検出するためにすでに見たIDを記録するセットを初期化する
-    for entry in data:  # JSONから読み込んだ各エントリに対してループする
+    # スキップは「静かな永久欠損」になり得る（読み込まれなかったエントリは次回 save_tasks で
+    # ファイルから消える）ため、debug ではなく warning で残す。アプリは INFO レベルで起動する
+    # （cli.py の basicConfig）ので、debug ではユーザーに一切見えないまま消えてしまう。
+    # ログにはエントリ全文ではなく「何件目か＋タイトル」だけを載せる（長大な本文でログを埋めない）。
+    for index, entry in enumerate(data):  # JSONから読み込んだ各エントリに対して、位置（何件目か）付きでループする
         if not isinstance(entry, dict):  # エントリが辞書でない場合（不正な要素）
+            logging.warning("壊れたタスクエントリをスキップしました (%d件目): 辞書形式ではありません", index + 1)  # 何件目が捨てられたかを警告ログで知らせる
             continue  # そのエントリをスキップして次へ進む
         try:
             task = Task.from_dict(entry)  # 辞書からTaskオブジェクトを生成する
         except Exception as e:  # 1 件壊れていても残りは読み込めるよう、個別にスキップする
-            logging.debug("壊れたタスクエントリをスキップしました: %r: %s", entry, e)  # デバッグログにスキップしたエントリと原因例外を記録する
+            logging.warning(
+                "壊れたタスクエントリをスキップしました (%d件目, title=%r): %s", index + 1, entry.get("title"), e
+            )  # どのエントリが捨てられたか（位置とタイトル）と原因例外を警告ログで知らせる
             continue  # このエントリをスキップして次のエントリへ進む
         # Treeview の iid には task.id を使うため「空でない一意な文字列」でなければならない。
         # 手編集や不正なマージで id が空文字・非文字列（例: 123）・重複になっていると、

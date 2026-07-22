@@ -127,9 +127,13 @@ class TaskPersistenceTests(unittest.TestCase):
                     "broken",
                     {"title": "ok2", "due": "2026-06-07T09:00:00"},
                 ], f)
-            with patch("reminder.config._TASKS_PATH", tasks_path):
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 self.assertLogs(level="WARNING") as logs:  # スキップが警告レベルでログに残ることも確認する
                 loaded = load_tasks()
             self.assertEqual([t.title for t in loaded], ["ok", "ok2"])
+            # スキップは次回保存でエントリが永久に消えるため、INFO 起動でも見える
+            # warning で「何件目か」が分かる形で通知されること（debug では見えない）
+            self.assertTrue(any("2件目" in msg for msg in logs.output))  # 捨てられた位置がログに含まれること
 
     def test_load_skips_entries_with_unparseable_due(self):
         # 壊れた due を持つタスクが 1 件あっても、残りは読み込めること
@@ -141,9 +145,11 @@ class TaskPersistenceTests(unittest.TestCase):
                     {"title": "broken", "due": "not-a-date"},
                     {"title": "ok2", "due": "2026-06-07T09:00:00"},
                 ], f)
-            with patch("reminder.config._TASKS_PATH", tasks_path):
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 self.assertLogs(level="WARNING") as logs:  # スキップが警告レベルでログに残ることも確認する
                 loaded = load_tasks()
             self.assertEqual([t.title for t in loaded], ["ok", "ok2"])
+            self.assertTrue(any("broken" in msg for msg in logs.output))  # 捨てられたエントリのタイトルがログに含まれること
 
     def test_load_regenerates_duplicate_ids(self):
         # 同じ id を持つ 2 件を読み込んでも、iid 衝突を防ぐため id は一意化される
