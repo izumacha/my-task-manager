@@ -234,8 +234,7 @@ class CorruptFilePreservationTests(unittest.TestCase):
             broken = "{ this is not json"  # JSON として解釈できない壊れた内容を用意する
             with open(tasks_path, "w", encoding="utf-8") as f:  # 壊れたファイルを書き込み用に開く
                 f.write(broken)  # 壊れた内容をそのまま書き込む
-            with patch("reminder.config._TASKS_PATH", tasks_path), \
-                 patch("reminder.config._CONFIG_DIR", tmpdir):
+            with patch("reminder.config._TASKS_PATH", tasks_path):  # タスクファイルのパスをテスト用の一時ファイルへ差し替える
                 with self.assertLogs(level="WARNING") as logs:  # 警告ログが出ることを捕捉する
                     self.assertEqual(load_tasks(), [])  # 読み込みは空リストへフォールバックする
                 backup = tasks_path + ".corrupt"  # 退避先（元パス + .corrupt）のパスを組み立てる
@@ -257,8 +256,7 @@ class CorruptFilePreservationTests(unittest.TestCase):
             broken = "not json at all"  # JSON として解釈できない壊れた内容を用意する
             with open(path, "w", encoding="utf-8") as f:  # 壊れたファイルを書き込み用に開く
                 f.write(broken)  # 壊れた内容をそのまま書き込む
-            with patch("reminder.config._SETTINGS_PATH", path), \
-                 patch("reminder.config._CONFIG_DIR", tmpdir):
+            with patch("reminder.config._SETTINGS_PATH", path):  # 設定ファイルのパスをテスト用の一時ファイルへ差し替える
                 with self.assertLogs(level="WARNING") as logs:  # 警告ログが出ることを捕捉する
                     self.assertEqual(load_prefs().wake, "07:00")  # 読み込みは既定値へフォールバックする
                 backup = path + ".corrupt"  # 退避先のパスを組み立てる
