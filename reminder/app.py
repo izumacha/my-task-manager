@@ -19,11 +19,19 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
 
-from .config import Prefs, load_prefs, load_tasks, save_prefs, save_tasks
+from .config import (
+    Prefs,
+    load_prefs,
+    load_tasks,
+    save_prefs,
+    save_tasks,
+    set_save_blocked_listener,
+)
 from .notifications import _set_window_icon, play_notification_sound
 from .recurrence import (
     MAX_INTERVAL,
@@ -93,6 +101,10 @@ class PlannerApp:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root  # tkinter のルートウィンドウを保持する
+        # 読み込み失敗による保存拒否（config.py 側の fail-safe）が起きたとき、GUI で
+        # ユーザーへ可視化するコールバックを最初のロード前に登録する。config.py は
+        # GUI 非依存の永続化層（§10）なので、表示はこちら（app.py）が担う。
+        set_save_blocked_listener(self._on_save_blocked)  # 保存拒否をダイアログ表示に橋渡しするコールバックを登録する
         self.tasks: list[Task] = load_tasks()  # 保存済みタスクをファイルから読み込む
         self.prefs: Prefs = load_prefs()  # 起床/就寝時刻などの設定をファイルから読み込む
         self.jobs: dict[str, str] = {}  # タスク ID → 通知ジョブ ID の対応表を空で初期化する
@@ -1128,6 +1140,30 @@ class PlannerApp:
     def _persist_tasks(self) -> None:
         """現在のタスク一覧をディスクに保存する。"""
         save_tasks(self.tasks)  # タスクリストを JSON ファイルに書き出して永続化する
+
+    def _on_save_blocked(self, path: str, recovery_path: str | None) -> None:
+        """保存拒否（読み込み失敗による上書き停止）をユーザーへ可視化する。
+
+        config.py の save_tasks / save_prefs が「起動時に読み込めなかったファイルは
+        上書きしない」fail-safe で保存を拒否したとき、コールバック経由で呼ばれる。
+        呼び出しはセッション中 1 回だけ（config 側で保証）なので、保存のたびに
+        ダイアログが連発することはない。デスクトップエントリは Terminal=false で
+        起動されログが見えないため、警告ログだけでなくダイアログ＋ステータスバーで
+        必ず可視化する。メッセージにはスタックトレース等の内部詳細を含めない（§6/§9）。
+        """
+        file_label = os.path.basename(path)  # ユーザー向けメッセージにはフルパスではなくファイル名だけを使う
+        if recovery_path is not None:  # 変更内容の退避保存（.recovery）に成功している場合
+            detail = (f"今回の変更内容は同じフォルダの復旧用ファイル"
+                      f"「{os.path.basename(recovery_path)}」に退避保存されています。")  # 手動復旧できる退避先を案内する
+        else:  # 退避保存にも失敗した場合
+            detail = "変更内容の退避保存にも失敗したため、アプリを終了すると今回の変更が失われる可能性があります。"  # データ消失の恐れを明示する
+        self.status_var.set(f"保存を停止中: {file_label} を読み込めなかったため上書きしません。")  # ステータスバーにも常時見える形で表示する
+        messagebox.showwarning(
+            "保存できません",
+            f"起動時にデータファイル（{file_label}）を読み込めなかったため、"
+            "元のデータを守るために上書き保存を停止しています。\n\n"
+            f"{detail}\n\n"
+            "アプリを再起動すると、読み込みと保存を再試行します。")  # 一度だけ警告ダイアログで確実にユーザーへ知らせる
 
 
 # 旧名との後方互換エイリアス

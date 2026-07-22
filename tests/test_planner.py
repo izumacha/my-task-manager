@@ -36,6 +36,9 @@ class AppTestCase(unittest.TestCase):
     def setUp(self):
         self.save_tasks = self._start("reminder.app.save_tasks")
         self.save_prefs = self._start("reminder.app.save_prefs")
+        # __init__ が config のモジュールグローバルへコールバックを登録するため、
+        # テスト間で本物の config へリスナーが漏れないようモックに差し替える
+        self.set_listener = self._start("reminder.app.set_save_blocked_listener")
         # 起動時整理はテストでは無効化（提供したタスクをそのまま使う）
         self.prune = self._start("reminder.app.prune_old_completed",
                                  side_effect=lambda tasks, *a, **k: tasks)
@@ -787,6 +790,41 @@ class RolloverTests(AppTestCase):
         app._schedule_all = Mock()
         app._refresh()
         app._schedule_all.assert_not_called()
+
+
+class SaveBlockedNotificationTests(AppTestCase):
+    """保存拒否の GUI 通知（_on_save_blocked）と、コールバック登録のテスト。"""
+
+    def test_listener_registered_on_init(self):
+        # 起動時に config の保存拒否コールバックとして _on_save_blocked が登録されること
+        app, _ = self._app()
+        self.set_listener.assert_called_once_with(app._on_save_blocked)
+
+    def test_on_save_blocked_shows_warning_with_recovery_hint(self):
+        # 復旧用ファイルがある場合、警告ダイアログとステータスバーの両方で可視化され、
+        # メッセージに復旧用ファイル名が含まれ、フルパス等の内部詳細は含まれないこと
+        app, _ = self._app()
+        with patch("reminder.app.messagebox") as mb:
+            app._on_save_blocked("/home/user/.config/reminder/tasks.json",
+                                 "/home/user/.config/reminder/tasks.json.recovery")
+        mb.showwarning.assert_called_once()
+        title, message = mb.showwarning.call_args[0]
+        self.assertEqual(title, "保存できません")
+        self.assertIn("tasks.json.recovery", message)  # 手動復旧できる退避先が案内されること
+        self.assertNotIn("/home/user", message)  # フルパス（内部詳細）はメッセージに含めないこと
+        self.assertIn("tasks.json", app.status_var.get())  # ステータスバーにも保存停止中と分かる表示が残ること
+        self.assertIn("保存を停止中", app.status_var.get())
+
+    def test_on_save_blocked_without_recovery_warns_of_data_loss(self):
+        # 復旧用ファイルの退避にも失敗した場合（recovery_path=None）は、
+        # 変更が失われる可能性がある旨を明示して警告すること
+        app, _ = self._app()
+        with patch("reminder.app.messagebox") as mb:
+            app._on_save_blocked("/home/user/.config/reminder/settings.json", None)
+        mb.showwarning.assert_called_once()
+        _, message = mb.showwarning.call_args[0]
+        self.assertIn("失われる可能性", message)  # データ消失の恐れが明示されること
+        self.assertNotIn("recovery", message)  # 存在しない復旧用ファイルは案内しないこと
 
 
 class BackwardCompatTests(unittest.TestCase):
