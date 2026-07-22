@@ -340,6 +340,38 @@ class CarryOverTests(unittest.TestCase):
         self.assertEqual(carry_over_overdue(tasks, today), 1)
         self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 6, 7, 22, 0))
 
+    def test_in_progress_task_ending_before_wake_not_carried_with_now(self):
+        # 深夜跨ぎだが起床時刻より前に終わるタスク（22:30 開始・120 分 → 翌 00:30 終了）は
+        # end_dt > day_start の保護に掛からない。now=00:15（まだ実行中）を渡した場合は
+        # 繰り越さず、due が +24h 書き換わらないことを確認する。
+        today = datetime.date(2026, 7, 22)
+        tasks = [_t("夜ふかし作業", "2026-07-21T22:30:00", 120)]  # 終了 7/22 00:30
+        now = datetime.datetime(2026, 7, 22, 0, 15)  # タスク実行中の深夜 00:15
+        self.assertEqual(carry_over_overdue(tasks, today, now=now), 0)
+        self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 7, 21, 22, 30))  # due は元のまま
+
+    def test_same_task_carried_after_it_finishes(self):
+        # 同じタスクでも終了後（now=00:45）は通常どおり今日へ繰り越される。
+        today = datetime.date(2026, 7, 22)
+        tasks = [_t("夜ふかし作業", "2026-07-21T22:30:00", 120)]  # 終了 7/22 00:30
+        now = datetime.datetime(2026, 7, 22, 0, 45)  # タスク終了後の深夜 00:45
+        self.assertEqual(carry_over_overdue(tasks, today, now=now), 1)
+        self.assertEqual(tasks[0].due_dt, datetime.datetime(2026, 7, 22, 22, 30))  # 今日の同時刻へ移動
+
+    def test_now_none_keeps_legacy_behaviour(self):
+        # now を渡さない場合は従来どおり（実行中保護なし）繰り越す。純粋関数としての
+        # 後方互換を保証する回帰テスト。
+        today = datetime.date(2026, 7, 22)
+        tasks = [_t("夜ふかし作業", "2026-07-21T22:30:00", 120)]  # 終了 7/22 00:30
+        self.assertEqual(carry_over_overdue(tasks, today), 1)
+
+    def test_task_ending_exactly_at_now_is_carried(self):
+        # 境界値: end_dt == now はちょうど終了した瞬間なので繰り越す（厳密比較 end_dt > now）。
+        today = datetime.date(2026, 7, 22)
+        tasks = [_t("夜ふかし作業", "2026-07-21T22:30:00", 120)]  # 終了 7/22 00:30
+        now = datetime.datetime(2026, 7, 22, 0, 30)  # ちょうど終了時刻
+        self.assertEqual(carry_over_overdue(tasks, today, now=now), 1)
+
     def test_task_ending_exactly_at_wake_is_carried(self):
         # 境界値: 終了がちょうど当日の起床時刻（既定 07:00）の場合。
         # 判定は end_dt > day_start の厳密比較なので繰り越す（build_day_timeline も

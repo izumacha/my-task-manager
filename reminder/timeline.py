@@ -268,12 +268,19 @@ def carry_over_overdue(
     today: datetime.date,
     wake_min: int = DEFAULT_WAKE_MIN,
     sleep_min: int = DEFAULT_SLEEP_MIN,
+    now: datetime.datetime | None = None,
 ) -> int:
     """未完了のまま前のプランナー日になったタスクを当日へ繰り越す。
 
     判定・配置はプランナー日基準で行う（夜間レンジでは就寝境界まで前日扱い）。
     時刻はそのまま、プランナー日だけ today に更新する。タスクを破壊的に
     書き換え、繰り越した件数を返す。
+
+    now を渡すと、まだ終了していない（end_dt > now の）実行中タスクは
+    繰り越さない。深夜に日付が変わった直後、起床時刻より前に終わる
+    実行中タスクの due が +24h 書き換わるのを防ぐための保護で、
+    GUI からの定期リフレッシュでは必ず渡す。None の場合はこの保護を
+    行わない（後方互換のため）。
 
     Returns:
         繰り越したタスク数。
@@ -292,6 +299,11 @@ def carry_over_overdue(
             # （日中に due を書き換えず、表示との整合を優先する意図的なトレードオフ）。
             if task.end_dt > day_start:  # 終了日時が今日の起床時刻を越えている（＝当日の窓に掛かる）場合
                 continue  # 繰り越さずに次のタスクへ進む
+            # 上の day_start 判定は「起床時刻より前に終わる」深夜跨ぎタスクを守れない
+            # （例: 22:30 開始・120 分 → 翌 00:30 終了のタスクは 00:15 の時点でまだ実行中）。
+            # 現在時刻 now が分かっている場合は、終了前のタスクを実行中とみなして繰り越さない。
+            if now is not None and task.end_dt > now:  # 現在時刻が渡されていて、タスクがまだ終了していない場合
+                continue  # 実行中なので繰り越さずに次のタスクへ進む
             new_start = _calendar_dt(today, start.time(), wake_min, sleep_min)  # 今日の同時刻を暦日として計算する
             task.due = new_start.strftime(ISO_FMT)  # タスクの開始日時を今日に書き換える
             moved += 1  # 繰り越し件数を 1 増やす
