@@ -378,6 +378,18 @@ class TransientIoErrorTests(unittest.TestCase):
                 self.assertEqual(load_tasks(), [])  # 読み込みは空リストへフォールバックする
             self.assertTrue(os.path.exists(tasks_path + ".corrupt"))  # 壊れたファイルは退避されていること
 
+    def test_deeply_nested_json_quarantines_instead_of_crashing(self):
+        # 異常に深くネストした JSON（RecursionError）でも起動不能にならず、
+        # 壊れたファイルとして .corrupt へ退避して空リストへフォールバックすること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            with open(tasks_path, "w", encoding="utf-8") as f:  # 病的にネストしたファイルを書き込み用に開く
+                f.write("[" * 100_000)  # JSON パーサの再帰上限を超える深さのネストを書き込む
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
+                self.assertEqual(load_tasks(), [])  # クラッシュせず空リストへフォールバックする
+            self.assertTrue(os.path.exists(tasks_path + ".corrupt"))  # 解析不能なファイルは退避されていること
+
 
 class AtomicWriteDurabilityTests(unittest.TestCase):
     """原子的書き込みが「途中失敗で既存ファイルを壊さない」ことを保証するテスト。"""

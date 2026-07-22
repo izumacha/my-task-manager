@@ -106,7 +106,7 @@ def load_prefs() -> Prefs:
             data = json.load(f)  # JSON として読み込んで辞書に変換する
     except FileNotFoundError:  # ファイルが存在しない場合
         return Prefs()  # デフォルト設定を返す
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:  # 中身が JSON / UTF-8 として解釈できない場合（本当に壊れたファイル）
+    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as e:  # 中身が JSON / UTF-8 として解釈できない・異常に深いネストで解析不能な場合（本当に壊れたファイル）
         logging.warning("設定ファイルの読み込みに失敗しました (%s): %s", _SETTINGS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
         _preserve_corrupt_file(_SETTINGS_PATH)  # 壊れた設定ファイルを退避し、次回 save_prefs での上書き消失を防ぐ
         return Prefs()  # デフォルト設定を返す
@@ -173,7 +173,7 @@ def load_tasks() -> list[Task]:
             data = json.load(f)  # JSON として読み込んでリストに変換する
     except FileNotFoundError:  # ファイルが存在しない場合（初回起動など）
         return []  # タスクが存在しないとして空リストを返す
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:  # 中身が JSON / UTF-8 として解釈できない場合（本当に壊れたファイル）
+    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as e:  # 中身が JSON / UTF-8 として解釈できない・異常に深いネストで解析不能な場合（本当に壊れたファイル）
         logging.warning("タスクファイルの読み込みに失敗しました (%s): %s", _TASKS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
         _preserve_corrupt_file(_TASKS_PATH)  # 壊れたタスクファイルを退避し、次回 save_tasks での上書き消失を防ぐ
         return []  # 読み込み失敗なので空リストを返す

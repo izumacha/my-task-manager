@@ -329,7 +329,7 @@ class PlannerApp:
         # root へ束縛すると、起床/就寝スピンボックスなど無関係なウィジェットで Enter を
         # 押しただけでタスクが追加されてしまうため（誤発火の防止）。
         for widget in (self.title_entry, self.hour_menu, self.minute_menu,
-                       self.dur_menu, self.interval_menu):  # タスク入力カードの各入力ウィジェットについてループする
+                       self.dur_menu, self.recur_menu, self.interval_menu):  # タスク入力カードの各入力ウィジェットについてループする
             widget.bind("<Return>", lambda _e: self.add_to_timeline())  # その入力欄で Enter キーを押すとタスクをタイムラインへ追加する
 
     def _build_timeline(self, frame: ttk.Frame) -> None:
