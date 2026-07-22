@@ -1,4 +1,5 @@
 """tests/test_config.py — タスク永続化（load_tasks / save_tasks）のテスト"""
+import datetime
 import json
 import os
 import tempfile
@@ -6,9 +7,17 @@ import unittest
 from unittest.mock import patch
 
 from reminder import config
-from reminder.config import Prefs, load_prefs, load_tasks, save_prefs, save_tasks
+from reminder.config import (
+    COMPLETION_RETENTION_DAYS,
+    Prefs,
+    load_prefs,
+    load_tasks,
+    save_prefs,
+    save_tasks,
+    set_save_blocked_listener,
+)
 from reminder.recurrence import RECUR_WEEKLY
-from reminder.task import Task
+from reminder.task import ISO_FMT, Task
 
 
 class PrefsPersistenceTests(unittest.TestCase):
@@ -389,6 +398,192 @@ class TransientIoErrorTests(unittest.TestCase):
                  self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
                 self.assertEqual(load_tasks(), [])  # クラッシュせず空リストへフォールバックする
             self.assertTrue(os.path.exists(tasks_path + ".corrupt"))  # 解析不能なファイルは退避されていること
+
+
+class SaveRefusalRecoveryTests(unittest.TestCase):
+    """保存拒否時に変更内容が復旧用ファイルへ退避され、UI 層へ 1 回だけ通知されることのテスト。"""
+
+    def setUp(self):
+        # モジュールレベルの保存拒否フラグ・通知コールバックが他のテストへ漏れないよう、前後で毎回リセットする
+        config._failed_load_paths.clear()  # テスト開始前に保存拒否の記録を空にする
+        self.addCleanup(config._failed_load_paths.clear)  # テスト終了後にも保存拒否の記録を空へ戻す
+        set_save_blocked_listener(None)  # コールバック登録と「通知済み」フラグをリセットする
+        self.addCleanup(set_save_blocked_listener, None)  # テスト終了後にもコールバック登録を解除する
+
+    def test_refused_task_save_writes_recovery_file_and_reports(self):
+        # 保存拒否時、本体ファイルは無傷のまま、変更内容が tasks.json.recovery へ退避され、
+        # 登録済みコールバックに (本体パス, 復旧用パス) が通知されること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            healthy = [{"title": "健全", "due": "2026-06-06T09:00:00"}]  # 守られるべき健全なデータを用意する
+            with open(tasks_path, "w", encoding="utf-8") as f:  # 健全なファイルを書き込み用に開く
+                json.dump(healthy, f)  # 健全な内容を書き込む
+            calls = []  # コールバック呼び出しの記録リストを初期化する
+            set_save_blocked_listener(lambda p, r: calls.append((p, r)))  # 通知内容を記録するコールバックを登録する
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # タスクファイルのパスをテスト用に差し替える
+                config._failed_load_paths.add(tasks_path)  # 起動時の読み込み失敗（保存拒否状態）を再現する
+                with self.assertLogs(level="WARNING") as logs:  # 保存中止と退避保存の警告ログを捕捉する
+                    save_tasks([Task(title="編集後", due="2026-06-07T09:00:00")])  # 保存拒否状態で保存を試みる
+            with open(tasks_path, encoding="utf-8") as f:  # 保存試行後の本体ファイルを開く
+                self.assertEqual(json.load(f), healthy)  # 本体ファイルは上書きされず無傷のまま残っていること
+            recovery = tasks_path + ".recovery"  # 復旧用ファイルのパスを組み立てる
+            self.assertTrue(os.path.exists(recovery))  # 復旧用ファイルが作られていること
+            with open(recovery, encoding="utf-8") as f:  # 復旧用ファイルを開く
+                self.assertEqual([d["title"] for d in json.load(f)], ["編集後"])  # その日の編集内容が退避保存されていること
+            self.assertEqual(calls, [(tasks_path, recovery)])  # 本体パスと復旧用パスが正しく通知されていること
+            self.assertTrue(any("退避保存" in msg for msg in logs.output))  # 退避先の場所がログで案内されていること
+
+    def test_refused_prefs_save_writes_recovery_file(self):
+        # settings.json も対称に、保存拒否時は settings.json.recovery へ退避されること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")  # テスト用の設定ファイルパスを組み立てる
+            with open(path, "w", encoding="utf-8") as f:  # 健全な設定ファイルを書き込み用に開く
+                json.dump({"wake": "06:30", "sleep": "22:00"}, f)  # 健全な設定内容を書き込む
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # 設定ファイルのパスをテスト用に差し替える
+                config._failed_load_paths.add(path)  # 起動時の読み込み失敗（保存拒否状態）を再現する
+                with self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
+                    save_prefs(Prefs(wake="05:00"))  # 保存拒否状態で設定の保存を試みる
+            with open(path, encoding="utf-8") as f:  # 保存試行後の本体ファイルを開く
+                self.assertEqual(json.load(f)["wake"], "06:30")  # 本体の設定は上書きされていないこと
+            with open(path + ".recovery", encoding="utf-8") as f:  # 復旧用ファイルを開く
+                self.assertEqual(json.load(f)["wake"], "05:00")  # 保存しようとした設定が退避されていること
+
+    def test_recovery_file_is_never_auto_loaded(self):
+        # 復旧用ファイルが存在しても、load_tasks は本体ファイルしか読まない
+        # （古い退避内容で健全なデータを黙って置き換えないための最小スコープ方針の確認）
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる（本体は作らない）
+            with open(tasks_path + ".recovery", "w", encoding="utf-8") as f:  # 復旧用ファイルだけを書き込み用に開く
+                json.dump([{"title": "退避分", "due": "2026-06-06T09:00:00"}], f)  # 退避された内容を書き込む
+            with patch("reminder.config._TASKS_PATH", tasks_path):  # タスクファイルのパスをテスト用に差し替える
+                self.assertEqual(load_tasks(), [])  # 本体が無ければ復旧用ファイルは読まれず空リストになること
+
+    def test_recovery_write_failure_reports_none(self):
+        # 退避保存にも失敗した場合は、復旧用パスの代わりに None が通知され、警告ログが残ること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            calls = []  # コールバック呼び出しの記録リストを初期化する
+            set_save_blocked_listener(lambda p, r: calls.append((p, r)))  # 通知内容を記録するコールバックを登録する
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # タスクファイルのパスをテスト用に差し替える
+                config._failed_load_paths.add(tasks_path)  # 保存拒否状態を再現する
+                with patch("reminder.config._atomic_write_json", side_effect=OSError("disk full")), \
+                     self.assertLogs(level="WARNING") as logs:  # 退避保存の書き込みも失敗する状況を再現する
+                    save_tasks([Task(title="編集後", due="2026-06-07T09:00:00")])  # 保存を試みる
+            self.assertEqual(calls, [(tasks_path, None)])  # 復旧用ファイル無し（None）として通知されること
+            self.assertTrue(any("退避保存に失敗" in msg for msg in logs.output))  # 退避失敗が警告ログに残ること
+
+    def test_save_blocked_notification_fires_exactly_once_per_session(self):
+        # 保存が何度拒否されても（複数ファイルにまたがっても）、通知コールバックは
+        # セッション中 1 回しか呼ばれないこと（ダイアログ連発の防止）。
+        # 一方で復旧用ファイルへの退避保存は毎回行われ、常に最新の編集内容が残ること。
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            settings_path = os.path.join(tmpdir, "settings.json")  # テスト用の設定ファイルパスを組み立てる
+            calls = []  # コールバック呼び出しの記録リストを初期化する
+            set_save_blocked_listener(lambda p, r: calls.append((p, r)))  # 通知回数を記録するコールバックを登録する
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._SETTINGS_PATH", settings_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # 両ファイルのパスをテスト用に差し替える
+                config._failed_load_paths.update({tasks_path, settings_path})  # 両ファイルとも保存拒否状態を再現する
+                with self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
+                    save_tasks([Task(title="1回目", due="2026-06-07T09:00:00")])  # 1 回目の保存拒否（ここで通知される）
+                    save_tasks([Task(title="2回目", due="2026-06-07T10:00:00")])  # 2 回目の保存拒否（通知は増えない）
+                    save_prefs(Prefs(wake="05:00"))  # 別ファイルの保存拒否でも通知は増えない
+            self.assertEqual(len(calls), 1)  # 通知はセッション中ちょうど 1 回だけであること
+            self.assertEqual(calls[0][0], tasks_path)  # 最初に拒否されたファイル（tasks.json）が通知されていること
+            with open(tasks_path + ".recovery", encoding="utf-8") as f:  # タスクの復旧用ファイルを開く
+                self.assertEqual([d["title"] for d in json.load(f)], ["2回目"])  # 退避保存は毎回行われ最新の内容が残ること
+            self.assertTrue(os.path.exists(settings_path + ".recovery"))  # 設定側の退避保存も行われていること
+
+    def test_new_listener_registration_resets_once_per_session(self):
+        # 新しいコールバックを登録し直すと「1 回だけ」のカウントもリセットされ、
+        # 新しい登録者は改めて 1 回通知を受けられること
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+            first, second = [], []  # 1 人目・2 人目のコールバック呼び出し記録リストを初期化する
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # タスクファイルのパスをテスト用に差し替える
+                config._failed_load_paths.add(tasks_path)  # 保存拒否状態を再現する
+                set_save_blocked_listener(lambda p, r: first.append(p))  # 1 人目のコールバックを登録する
+                with self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
+                    save_tasks([])  # 1 人目への通知が発生する保存拒否を起こす
+                set_save_blocked_listener(lambda p, r: second.append(p))  # 2 人目のコールバックへ登録し直す
+                with self.assertLogs(level="WARNING"):  # 警告ログが出ることも確認する
+                    save_tasks([])  # 2 人目への通知が発生する保存拒否を起こす
+            self.assertEqual(len(first), 1)  # 1 人目は 1 回だけ通知されていること
+            self.assertEqual(len(second), 1)  # 登録し直した 2 人目も改めて 1 回通知されていること
+
+    def test_listener_exception_does_not_break_refused_save(self):
+        # 通知コールバック（UI 層）が例外を投げても、退避保存は完了しており、
+        # 永続化層はクラッシュせず警告ログを残すだけであること（fail-safe）
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks_path = os.path.join(tmpdir, "tasks.json")  # テスト用のタスクファイルパスを組み立てる
+
+            def boom(p, r):  # 必ず失敗する通知コールバックを定義する
+                raise RuntimeError("UI 側の不具合")  # UI 層の例外を再現する
+
+            set_save_blocked_listener(boom)  # 失敗するコールバックを登録する
+            with patch("reminder.config._TASKS_PATH", tasks_path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir):  # タスクファイルのパスをテスト用に差し替える
+                config._failed_load_paths.add(tasks_path)  # 保存拒否状態を再現する
+                with self.assertLogs(level="WARNING") as logs:  # 通知失敗の警告ログを捕捉する
+                    save_tasks([Task(title="編集後", due="2026-06-07T09:00:00")])  # 例外を漏らさず完了すること
+            self.assertTrue(os.path.exists(tasks_path + ".recovery"))  # 退避保存自体は成功していること
+            self.assertTrue(any("コールバック" in msg for msg in logs.output))  # 通知失敗が警告ログに残ること
+
+
+class CompletionsTrimTests(unittest.TestCase):
+    """完了履歴（Prefs.completions）が保持期間で刈り込まれることのテスト。"""
+
+    FIXED_NOW = datetime.datetime(2026, 7, 22, 12, 0, 0)  # テスト全体で使う固定の現在日時（実時計に依存しない）
+
+    def _iso(self, delta: datetime.timedelta) -> str:
+        """固定の現在日時から delta だけ過去の完了日時を ISO 文字列で返す。"""
+        return (self.FIXED_NOW - delta).strftime(ISO_FMT)  # 固定時刻から差し引いた日時を ISO 形式に変換して返す
+
+    def test_load_prunes_old_completions_boundary_inclusive(self):
+        # 読み込み時、保持期間より古い履歴は捨てられ、ちょうど境界（730 日前）の履歴は保持されること
+        recent = self._iso(datetime.timedelta(days=1))  # 保持される新しい完了（1 日前）を用意する
+        boundary = self._iso(datetime.timedelta(days=COMPLETION_RETENTION_DAYS))  # 境界ちょうど（730 日前）の完了を用意する
+        too_old = self._iso(datetime.timedelta(days=COMPLETION_RETENTION_DAYS, seconds=1))  # 境界を 1 秒超えた古い完了を用意する
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")  # テスト用の設定ファイルパスを組み立てる
+            with open(path, "w", encoding="utf-8") as f:  # 設定ファイルを書き込み用に開く
+                json.dump({"completions": [recent, boundary, too_old]}, f)  # 新旧混在の完了履歴を書き込む
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._now", return_value=self.FIXED_NOW):  # パスと現在時刻をテスト用に固定する
+                loaded = load_prefs()  # 設定を読み込む
+            self.assertEqual(loaded.completions, [recent, boundary])  # 新しい履歴と境界ちょうどの履歴だけが残ること
+
+    def test_save_prunes_old_completions_in_file_and_memory(self):
+        # 保存時にも古い履歴が刈り込まれ、ファイルとメモリ上の Prefs の両方が上限内に保たれること
+        recent = self._iso(datetime.timedelta(days=30))  # 保持される新しい完了（30 日前）を用意する
+        too_old = self._iso(datetime.timedelta(days=COMPLETION_RETENTION_DAYS + 1))  # 保持期間を過ぎた古い完了を用意する
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")  # テスト用の設定ファイルパスを組み立てる
+            prefs = Prefs(completions=[recent, too_old])  # 新旧混在の完了履歴を持つ設定を作る
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._CONFIG_DIR", tmpdir), \
+                 patch("reminder.config._now", return_value=self.FIXED_NOW):  # パスと現在時刻をテスト用に固定する
+                save_prefs(prefs)  # 設定を保存する
+            self.assertEqual(prefs.completions, [recent])  # メモリ上の履歴も刈り込まれていること（毎分の統計パース負荷も抑える）
+            with open(path, encoding="utf-8") as f:  # 保存されたファイルを開く
+                self.assertEqual(json.load(f)["completions"], [recent])  # ファイルにも新しい履歴だけが書かれていること
+
+    def test_prune_drops_unparseable_completion_strings(self):
+        # 日時として解釈できない履歴文字列は、壊れたエントリのスキップと同じ方針で捨てられること
+        recent = self._iso(datetime.timedelta(days=1))  # 保持される新しい完了を用意する
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")  # テスト用の設定ファイルパスを組み立てる
+            with open(path, "w", encoding="utf-8") as f:  # 設定ファイルを書き込み用に開く
+                json.dump({"completions": ["not-a-date", recent]}, f)  # 解釈できない文字列を混ぜた履歴を書き込む
+            with patch("reminder.config._SETTINGS_PATH", path), \
+                 patch("reminder.config._now", return_value=self.FIXED_NOW):  # パスと現在時刻をテスト用に固定する
+                loaded = load_prefs()  # 設定を読み込む
+            self.assertEqual(loaded.completions, [recent])  # 解釈できない文字列は捨てられ、正常な履歴だけが残ること
 
 
 class AtomicWriteDurabilityTests(unittest.TestCase):

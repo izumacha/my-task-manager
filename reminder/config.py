@@ -6,20 +6,32 @@
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
+from typing import Callable
 
-from .task import Task
+from .task import ISO_FMT, Task
 from .timeline import DEFAULT_SLEEP_MIN, DEFAULT_WAKE_MIN, hhmm_to_min, min_to_hhmm
 
 _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "reminder")  # 設定ファイルを置くディレクトリのパスを組み立てる
 _TASKS_PATH = os.path.join(_CONFIG_DIR, "tasks.json")  # タスク一覧を保存するJSONファイルのフルパスを定義する
 _SETTINGS_PATH = os.path.join(_CONFIG_DIR, "settings.json")  # アプリ設定を保存するJSONファイルのフルパスを定義する
 _CORRUPT_SUFFIX = ".corrupt"  # 読めないファイルを退避するときに元のパス末尾へ付ける拡張子
+# 保存拒否中の変更内容を退避保存する復旧用ファイルの拡張子。復旧用ファイルは
+# load_tasks / load_prefs から**決して自動読み込みしない**（本体ファイルが一時的に
+# 読めなかっただけの可能性が高く、古い退避内容で健全なデータを黙って置き換える
+# リスクを避けるため）。ユーザーが内容を確認して手動で復旧する前提の最小スコープとする。
+_RECOVERY_SUFFIX = ".recovery"  # 復旧用ファイルを作るときに元のパス末尾へ付ける拡張子
+
+# 完了履歴（Prefs.completions）を保持する日数の上限。統計（今日の完了数・連続達成日数）は
+# 直近の連続した日しか参照しないため、2 年（730 日）残せば十分であり、無制限に伸び続ける
+# リストによるファイル肥大・毎分の全履歴パース負荷を防ぐ（§8 一覧・リストの上限）。
+COMPLETION_RETENTION_DAYS = 730  # 完了履歴を保持する日数（これより古いエントリは読み書き時に刈り込む）
 
 # 設計判断: 一時的な I/O エラー（権限不足・ディスク障害などの OSError）で読み込めなかった
 # ファイルのパスを記録しておく集合。壊れた JSON と違い、ファイル自体は健全なまま
@@ -28,6 +40,84 @@ _CORRUPT_SUFFIX = ".corrupt"  # 読めないファイルを退避するときに
 # 健全なデータを丸ごと失ってしまうため、再び読み込みに成功するまで保存を拒否する
 # （§9 fail-safe: 「読めなかったファイルには書かない」を安全側の既定とする）。
 _failed_load_paths: set[str] = set()  # 読み込みに失敗した（保存を拒否すべき）ファイルパスの集合
+
+# 保存拒否を UI 層へ知らせるためのコールバックの型。引数は
+# (保存を拒否した本体ファイルのパス, 復旧用ファイルのパス（退避保存に失敗したら None）)。
+SaveBlockedListener = Callable[[str, "str | None"], None]  # UI 通知コールバックの型エイリアス
+
+# 設計判断: config.py は GUI 非依存の永続化層（§10 ロジックと UI の分離）なので、
+# tkinter を import してダイアログを出すことはしない。代わりに「保存を拒否した」事実を
+# コールバックで通知し、表示方法（ステータスバー・ダイアログ等）は登録側（app.py）に任せる。
+_save_blocked_listener: SaveBlockedListener | None = None  # 保存拒否を通知する登録済みコールバック（未登録なら None）
+_save_blocked_notified = False  # このセッションで保存拒否をすでに通知したかどうか（通知はセッション中 1 回だけ）
+
+
+def set_save_blocked_listener(listener: SaveBlockedListener | None) -> None:
+    """保存拒否（読み込み失敗による上書き停止）を通知するコールバックを登録する。
+
+    listener には保存が拒否されたとき (本体ファイルのパス, 復旧用ファイルのパス or None)
+    が渡される。None を渡すと登録を解除する。通知の連発を避けるため、コールバックの
+    呼び出しはセッション中 1 回だけに制限され、新しい listener を登録し直すと
+    「1 回だけ」のカウントもリセットされる（新しい利用者は改めて 1 回通知を受けられる）。
+    """
+    global _save_blocked_listener, _save_blocked_notified  # モジュール変数を書き換えるため global 宣言する
+    _save_blocked_listener = listener  # 渡されたコールバック（または None）を登録する
+    _save_blocked_notified = False  # 登録し直しに合わせて「通知済み」フラグをリセットする
+
+
+def _now() -> datetime.datetime:
+    """現在日時を返す。テスト時はこの関数をモックして時刻を固定できる。"""
+    return datetime.datetime.now()  # システムの現在日時を取得して返す（app.py の _get_now と同じ分離パターン）
+
+
+def _handle_refused_save(path: str, payload: object) -> None:
+    """保存拒否時の後処理: 変更内容を復旧用ファイルへ退避保存し、UI 層へ 1 回だけ通知する。
+
+    本体ファイル（読み込みに失敗した健全かもしれないファイル）には一切書かず、
+    隣に ``path + ".recovery"`` を作って「その日の編集内容」を失わせない（§9 fail-safe）。
+    退避保存には本体保存と同じ原子的書き込みヘルパーを使う。退避にも失敗した場合は
+    警告ログを残し、通知には復旧用ファイル無し（None）として伝える。
+    """
+    global _save_blocked_notified  # 「通知済み」フラグを書き換えるため global 宣言する
+    recovery_path: str | None = path + _RECOVERY_SUFFIX  # 復旧用ファイルのパス（本体パス + .recovery）を組み立てる
+    try:
+        _atomic_write_json(recovery_path, payload)  # 本体と同じ原子的書き込みで変更内容を復旧用ファイルへ退避保存する
+        logging.warning("保存できなかった内容を復旧用ファイルへ退避保存しました (%s)", recovery_path)  # 退避先の場所をログで案内する
+    except Exception as e:  # 退避保存自体に失敗した場合（本体が読めない状況ではディスク側の異常が続いている可能性が高い）
+        logging.warning("復旧用ファイルへの退避保存に失敗しました (%s): %s", recovery_path, e)  # 退避失敗も握り潰さずログに残す（§6）
+        recovery_path = None  # 通知側へ「復旧用ファイルは作れなかった」ことを伝えるため None にする
+    if _save_blocked_notified or _save_blocked_listener is None:  # すでに通知済み、または通知先が未登録なら
+        return  # 二重通知や無意味な呼び出しをせず処理を終える
+    _save_blocked_notified = True  # このセッションでは通知済みであることを記録する（通知は 1 回だけ）
+    try:
+        _save_blocked_listener(path, recovery_path)  # 登録済みコールバックに保存拒否と復旧用ファイルの場所を知らせる
+    except Exception as e:  # 通知側（UI 層）の失敗で永続化層が巻き込まれないよう捕捉する（fail-safe）
+        logging.warning("保存拒否の通知コールバックの実行に失敗しました: %s", e)  # 通知失敗も握り潰さずログに残す（§6）
+
+
+def _prune_completions(completions: list[str], now: datetime.datetime) -> list[str]:
+    """保持期間（COMPLETION_RETENTION_DAYS）より古い完了履歴を刈り込んだ新しいリストを返す。
+
+    境界はカットオフ日時を**含む**（ちょうど 730 日前の完了は保持する）。日時として
+    解釈できない文字列は、load_tasks の壊れたエントリスキップと同じ方針で捨てる
+    （stats.py 側でもどのみち無視され、残しても二度と使われないため）。
+    """
+    cutoff = now - datetime.timedelta(days=COMPLETION_RETENTION_DAYS)  # 保持期間の下限日時（これ以降を残す）を計算する
+    kept: list[str] = []  # 保持する完了履歴を蓄積するリストを初期化する
+    dropped = 0  # 刈り込んだ（捨てた）エントリ数のカウンタを初期化する
+    for item in completions:  # 完了履歴の各 ISO 文字列に対してループする
+        try:
+            dt = datetime.datetime.strptime(item, ISO_FMT)  # ISO 文字列を datetime オブジェクトに変換する
+        except (TypeError, ValueError):  # 日時として解釈できない壊れた値の場合
+            dropped += 1  # 捨てた件数を 1 増やす
+            continue  # このエントリは保持せず次へ進む
+        if dt >= cutoff:  # カットオフ日時以降（境界ちょうども含む）の完了なら
+            kept.append(item)  # 保持リストに追加する
+        else:  # 保持期間より古い完了なら
+            dropped += 1  # 捨てた件数を 1 増やす
+    if dropped:  # 1 件でも刈り込んだ場合は
+        logging.debug("保持期間を過ぎた/解釈できない完了履歴を %d 件刈り込みました", dropped)  # 何件消えたかをデバッグログに残す（§6）
+    return kept  # 刈り込み後の完了履歴リストを返す
 
 
 def _preserve_corrupt_file(path: str) -> None:
@@ -129,6 +219,7 @@ def load_prefs() -> Prefs:
         prefs.completions = []  # 空リストにリセットして不正な値を捨てる
     else:
         prefs.completions = [c for c in prefs.completions if isinstance(c, str)]  # 文字列でない要素を除去して文字列リストだけ保持する
+    prefs.completions = _prune_completions(prefs.completions, _now())  # 保持期間を過ぎた古い完了履歴を刈り込み、無制限に増えないようにする（§8）
     # /code-review ultra 指摘対応: wake/sleep は completions と異なり検証されておらず、
     # 不正値（数値・null・範囲外の "HH:MM" 等）が settings.json に混入すると、
     # PlannerApp._wake_min()/_sleep_min() 側の例外処理で毎回デフォルトへ黙って
@@ -156,12 +247,22 @@ def _coerce_hhmm(value: object, default_minutes: int, field_name: str) -> str:
 
 
 def save_prefs(prefs: Prefs) -> None:
-    """設定を JSON ファイルに原子的に書き出す（途中失敗で既存設定を壊さない）。"""
+    """設定を JSON ファイルに原子的に書き出す（途中失敗で既存設定を壊さない）。
+
+    書き出す前に完了履歴（completions）を保持期間で刈り込む。刈り込み結果は
+    prefs.completions にも書き戻し、ファイルだけでなくメモリ上の履歴（stats.py が
+    毎分パースするリスト）も上限内に保つ（§8）。
+    """
+    prefs.completions = _prune_completions(prefs.completions, _now())  # 保存のたびに古い完了履歴を刈り込み、ファイルとメモリの肥大化を防ぐ
+    payload = asdict(prefs)  # 保存する内容（辞書）をここで確定させる（通常保存と退避保存で同じ内容を使うため）
     if _SETTINGS_PATH in _failed_load_paths:  # このセッション中に一時的な I/O エラーで読み込めなかったファイルの場合
         logging.warning("設定ファイルは読み込みに失敗しているため、上書き保存を中止しました (%s)", _SETTINGS_PATH)  # 保存を拒否したことを黙って捨てずログに残す（§6）
+        # tasks.json と保存拒否の構造が完全に対称（payload を差し替えるだけ）なので、
+        # 復旧用ファイルへの退避保存と UI 通知も同じヘルパーで settings.json にも適用する。
+        _handle_refused_save(_SETTINGS_PATH, payload)  # 変更内容を settings.json.recovery へ退避保存し、UI 層へ 1 回だけ通知する
         return  # ディスク上の健全なデータを既定値ベースの内容で潰さないよう保存しない（fail-safe）
     try:
-        _atomic_write_json(_SETTINGS_PATH, asdict(prefs))  # 一時ファイル経由で安全に設定を書き出す
+        _atomic_write_json(_SETTINGS_PATH, payload)  # 一時ファイル経由で安全に設定を書き出す
     except Exception as e:  # ファイル書き込みで何らかのエラーが発生した場合
         logging.warning("設定ファイルの保存に失敗しました (%s): %s", _SETTINGS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
 
@@ -220,10 +321,12 @@ def load_tasks() -> list[Task]:
 
 def save_tasks(tasks: list[Task]) -> None:
     """タスク一覧を JSON ファイルに原子的に書き出す（途中失敗で既存タスクを壊さない）。"""
+    payload = [t.to_dict() for t in tasks]  # 保存する内容（辞書のリスト）をここで確定させる（通常保存と退避保存で同じ内容を使うため）
     if _TASKS_PATH in _failed_load_paths:  # このセッション中に一時的な I/O エラーで読み込めなかったファイルの場合
         logging.warning("タスクファイルは読み込みに失敗しているため、上書き保存を中止しました (%s)", _TASKS_PATH)  # 保存を拒否したことを黙って捨てずログに残す（§6）
+        _handle_refused_save(_TASKS_PATH, payload)  # その日の編集内容を tasks.json.recovery へ退避保存し、UI 層へ 1 回だけ通知する
         return  # ディスク上の健全なデータを既定値ベースの内容で潰さないよう保存しない（fail-safe）
     try:
-        _atomic_write_json(_TASKS_PATH, [t.to_dict() for t in tasks])  # 一時ファイル経由で安全にタスク一覧を書き出す
+        _atomic_write_json(_TASKS_PATH, payload)  # 一時ファイル経由で安全にタスク一覧を書き出す
     except Exception as e:  # ファイル書き込みで何らかのエラーが発生した場合
         logging.warning("タスクファイルの保存に失敗しました (%s): %s", _TASKS_PATH, e)  # 失敗したパスと原因例外の両方を残す（§6: 例外を握り潰さない）
