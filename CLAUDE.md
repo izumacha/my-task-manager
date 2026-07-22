@@ -280,3 +280,17 @@ python -m pytest tests                   # 全ユニットテスト
 - OAuth トークンは名前付きボリューム `claude-home` に置き、ホスト FS や Docker イメージ層に書き出さない。
 - Linux 専用（iptables/ipset/cap_add 依存。macOS Docker Desktop 非対応）。スクリプトは Bash・先頭で `set -euo pipefail`、ログは stderr、インデント 4 スペース。
 - このリポジトリのコミットメッセージは英語・命令形・1 行要約（既存履歴に倣う。§12 の日本語コミット規約より優先する例外）。
+
+### G. batch-scheduler（Java 21 / Maven, バッチ実行マネージャ）
+
+- 正本は `docs/DESIGN.md`（アーキテクチャ・セキュリティモデル・将来拡張）。実装はここに従い、衝突したら先に設計を改訂してから実装を変更する。
+- バッチ定義ファイル（YAML）は **Makefile / CI パイプラインと同等の信頼入力**として扱う。一方で資源枯渇には防御する: bounded YAML parsing、出力キャプチャの上限、反復的（再帰でない）グラフアルゴリズム、state ディレクトリの安全性（runId 検証・シンボリックリンク非追従）。
+- MVP 非目標（non-goals）: スケジューリング・並列実行・分散。
+- テストは `src/test/java/...` の各クラス対応（`BatchConfigLoaderTest` / `BatchExecutorTest` / `DependencyGraphTest` 等）。CI は `mvn -B verify`（Java 21 / Temurin）。
+
+### H. Expense-Management-Rest-API（Java 21 / Spring Boot + C# .NET 10, REST API）
+
+- **主軸 `expense-tracker/`**: Java 21 / Spring Boot 3.3.5 / PostgreSQL 16 / Maven / Docker の REST API。金額は `BigDecimal` を使い浮動小数誤差を避ける。レスポンスは JSON、エラー形式は `{ "status": int, "message": string }`、入力検証は Jakarta Bean Validation。
+- **副 `src/` / `tests/`**: C# .NET 10 / Clean Architecture スキャフォールド（AgentForge）。現状は雛形段階。実装より先に `docs/DESIGN.md` の設計に従う。
+- 層構成: `controller/` → `service/` → `repository/`（Spring Data JPA）→ `domain/`（JPA エンティティ）。`dto/request/` と `dto/response/` を分離し内部エンティティを API 契約から切り離す。`GlobalExceptionHandler` がカスタム例外を HTTP ステータスへマップ。
+- CI は `.github/workflows/ci.yml` で Java 側（lint + build-test）と .NET 側（build-test）を実行。
