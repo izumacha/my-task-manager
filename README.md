@@ -63,6 +63,13 @@ pipx install git+https://github.com/izumacha/my-task-manager.git
 reminder
 ```
 
+ウィンドウアイコンも有効にする場合は、`icon` extra を付けて入れます（版の下限は
+`pyproject.toml` の `icon` extra が正本なので、extra 経由なら自動で従います）。
+
+```bash
+pipx install "my-task-manager[icon] @ git+https://github.com/izumacha/my-task-manager.git"
+```
+
 ---
 
 ## このアプリでできること
