@@ -30,7 +30,7 @@ dependencies = []
 # 未インストールでも reminder/notifications.py の _set_window_icon() が
 # ImportError を捕捉してアイコン設定をスキップするだけで、アプリ本体は問題なく動作する。
 icon = [
-  "cairosvg>=2.9.0",
+  "cairosvg>=2.9.1",
 ]
 
 [project.urls]
