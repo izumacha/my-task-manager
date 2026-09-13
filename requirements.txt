@@ -1,6 +1,9 @@
 # reminder は標準ライブラリ（tkinter 含む）のみで動作し、必須の実行時依存はない。
-# ウィンドウアイコン表示（SVG→PNG 変換）を有効にしたい場合のみ、以下のいずれかで
-# cairosvg をインストールする（未インストールでもアプリは正常に動作し、アイコン設定だけを
+# ウィンドウアイコン表示（SVG→PNG 変換）を有効にしたい場合のみ、以下で cairosvg を
+# インストールする（未インストールでもアプリは正常に動作し、アイコン設定だけを
 # graceful にスキップする。reminder/notifications.py の _set_window_icon() 参照）。
 #   pip install -e ".[icon]"
-#   pip install cairosvg>=2.7.0
+# 版の下限は pyproject.toml の [project.optional-dependencies] の icon が唯一の正本。
+# ここに `pip install cairosvg>=X.Y.Z` の形で数字を書き写さない — Dependabot が更新するのは
+# pyproject.toml 側だけなので、写しは取り残されて古い版を案内し続ける（実際この行は
+# 2.7.0 のまま残り、正本が 2.9.x へ進んだ後もそれを知らせていた）。
