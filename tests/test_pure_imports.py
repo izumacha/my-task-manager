@@ -10,6 +10,7 @@
    純粋ロジックを再利用できなくなる（CLAUDE.md §10）。
 
 2. **``__all__`` ・ eager 再エクスポート ・ ``_LAZY_GUI_EXPORTS`` の 3 つが食い違わないこと。**
+   さらに、pyproject の console-scripts が指す名前が実在すること（4 つ目の一覧）。
    ``reminder/__init__.py`` は「どの名前を公開するか」を手書きの一覧 3 つで表しており、
    ずれても実行時まで何も起きない。以下はいずれも **修正前は全件緑のまま通った**（実測）:
 
@@ -19,22 +20,43 @@
      → 例えば ``"main": "cli"`` を壊すと、pyproject の console-scripts
        （``reminder = "reminder:main"``）が解決できなくなり **pipx / pip install した
        利用者のコマンドが起動時に失敗する**のに、339 件すべて緑。
+   - ``_LAZY_GUI_EXPORTS`` の ``"main"`` 行と ``__all__`` の ``"main"`` を**同じ
+     変更セットで**消す（＝上記 3 一覧は整合したまま）→ `pipx install` した利用者の
+     ``reminder`` コマンドだけが起動時に失敗するのに全件緑。console-scripts は
+     3 一覧のどれでもない**4 つ目の手書き一覧**なので、突き合わせる相手として
+     pyproject 側も読む。
 
    従来の検査は純粋シンボル 3 件（free_minutes_today / next_occurrence /
    current_streak）と GUI シンボル 1 件（PlannerApp）を**名指しで**確かめるだけ
    だったため、名指ししていない公開名はどれだけ壊しても検出できなかった。
    名指しをやめ、``__all__`` から対象を導出して 1 件残らず参照できることを確かめる。
+
+**なぜ ``__all__`` を導出（``eager 名 + list(_LAZY_GUI_EXPORTS)``）にして一覧そのものを
+1 つに畳まないか**: ``__all__`` はリテラルの一覧であることに意味がある。リンタ・IDE・
+``help()`` はソースの ``__all__`` を静的に読んで補完や未使用検出を行うため、計算式にすると
+「このパッケージが何を公開しているか」がファイルを読んでも実行してみるまで分からなくなる。
+公開面は人が意図して決めるものなので、**畳まずに一覧のままにして、ずれを機械で落とす**側を
+選んでいる（CLAUDE.md §6 の「意図が読み取れない値を散らさない」と同じ向き）。
 """
 
 from __future__ import annotations
 
 import ast  # __init__.py の import 文を「__all__ とは独立な手がかり」として読むために使う
+import importlib  # console-scripts が指すモジュールを名前から読み込むために使う
 import subprocess  # 子プロセスで素の Python を起動するために使う
 import sys  # 現在のインタープリタのパスを得るために使う
 import unittest  # 標準のテストフレームワークを使う
 from pathlib import Path  # リポジトリルートのパス計算に使う
 
 import reminder  # 検査対象のパッケージ本体（conftest が tkinter のモックを注入済み）
+
+# tomllib は Python 3.11 以降の標準ライブラリ。pyproject の requires-python は >=3.10 なので、
+# 3.10 では読めない（CI の test マトリクスは 3.11 / 3.12 / 3.13 なので常に読める）。
+# 読めない環境では console-scripts の検査だけをスキップする（他の検査は動かす）。
+try:
+    import tomllib  # TOML を標準ライブラリで解釈する（3.11+）
+except ModuleNotFoundError:  # pragma: no cover - 3.10 でのみ通る枝
+    tomllib = None  # type: ignore[assignment]  # スキップ判定に使う番兵として None を入れる
 
 # リポジトリのルートディレクトリ（このファイルの親の親）を求める
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -115,12 +137,58 @@ print("OK" if not problems else "\\n".join(problems))
 """
 
 
+# `from . import theme` のようにサブモジュール自体を束縛する形は「公開シンボルの
+# 再エクスポート」ではないので導出から外す。外さないと、`reminder/app.py` が既に使っている
+# 慣用形を `__init__.py` へ足しただけで「__all__ へ追加するか、再エクスポートをやめろ」と
+# 案内されてしまう（壊れていないコードで赤くなる検査はいずれ緩められる）。
+#
+# 逆に、相対 import だけ・モジュール直下だけに絞ると**照合対象が黙って縮む**。実測では
+# `from .timeline import (...)` を `from reminder.timeline import (...)` へ書き換えたり、
+# import を try/except で包んだりするだけで、その行の名前が導出から丸ごと消え、
+# `__all__` から公開名を削る退行が全件緑（テスト件数も不変）で通った。書き方に左右されない
+# よう、自パッケージのサブモジュールからの from-import を、関数・クラスの外であれば
+# 制御構文の内側まで含めて拾う。
+
+
+def _package_level_statements(node: ast.AST):
+    """関数・クラスの本体へは降りずに、モジュールレベルの文を再帰的に列挙する。
+
+    `if` / `try` / `with` の内側に置かれた import も「パッケージ属性を作る」点では
+    直書きと同じなので拾う。関数・クラスの中の import はローカル束縛なので降りない。
+    """
+    # 直下の子ノードを 1 つずつ見る
+    for child in ast.iter_child_nodes(node):
+        # 関数・クラスの中はローカルスコープなので、そこから先は辿らない
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        # この子ノード自身を列挙する
+        yield child
+        # 制御構文の内側にある文も同じ規則で辿る
+        yield from _package_level_statements(child)
+
+
+def _is_submodule_import(node: ast.ImportFrom) -> bool:
+    """`from <自パッケージのサブモジュール> import ...` の形かどうかを判定する。"""
+    # `from . import theme` は module が None（サブモジュール束縛）なので対象外
+    if node.module is None:
+        return False
+    # 相対 import（`from .task import ...`）は必ず自パッケージのサブモジュール
+    if node.level > 0:
+        return True
+    # 絶対 import（`from reminder.task import ...`）も同じ再エクスポートの形として扱う
+    return node.module.startswith(f"{reminder.__name__}.")
+
+
 def _eagerly_reexported_names() -> list[str]:
-    """``reminder/__init__.py`` が冒頭で相対 import している再エクスポート名を返す。
+    """``reminder/__init__.py`` が eager に再エクスポートしているシンボル名を返す。
 
     ``__all__`` と突き合わせる相手は、``__all__`` 自身とは**独立な手がかり**でなければ
     ならない（同じ一覧から導出すると、一覧が縮んだときに検査も一緒に縮んで無力化する）。
     ここではソースの import 文そのものを読むので、片方だけを編集した差分が必ず現れる。
+
+    ``from .x import *`` は導出できる名前が ``"*"`` しかないので、そのまま返して
+    呼び出し側が専用の失敗として報告する（ここで黙って捨てると、公開面がまるごと
+    照合から外れる fail-open になる）。
     """
     # パッケージの __init__.py のパスを取得する（インストール形態に依存しないよう __file__ から引く）
     init_path = Path(reminder.__file__)
@@ -128,14 +196,28 @@ def _eagerly_reexported_names() -> list[str]:
     tree = ast.parse(init_path.read_text(encoding="utf-8"))
     # 収集した再エクスポート名を貯めるリスト
     names: list[str] = []
-    # モジュール直下の文だけを見る（関数の中の import は再エクスポートではない）
-    for node in tree.body:
-        # 相対 import（`from .xxx import yyy`）だけが再エクスポートの形
-        if isinstance(node, ast.ImportFrom) and node.level > 0:
+    # 関数・クラスの外にあるすべての文を見る（制御構文の内側も含む）
+    for node in _package_level_statements(tree):
+        # 自パッケージのサブモジュールからの from-import だけが再エクスポートの形
+        if isinstance(node, ast.ImportFrom) and _is_submodule_import(node):
             # `as` があればその別名が、なければ元の名前がパッケージ属性になる
             names.extend(alias.asname or alias.name for alias in node.names)
     # 収集した名前の一覧を返す
     return names
+
+
+def _console_script_targets() -> dict[str, str]:
+    """pyproject の ``[project.scripts]``（console-scripts）の定義を返す。
+
+    戻り値は「コマンド名 → ``module:attr``」の対応。`pip install` / `pipx install` が
+    作る実行ファイルはこの右辺を import して呼ぶだけなので、ここが指す名前が実在しないと
+    **インストールした利用者のコマンドだけが起動時に失敗する**（リポジトリ内の
+    ``python -m reminder`` も CI も緑のまま）。
+    """
+    # pyproject.toml を読み込んで TOML として解釈する
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    # [project.scripts] テーブル（未定義なら空）を返す
+    return data.get("project", {}).get("scripts", {})
 
 
 class PureImportTests(unittest.TestCase):
@@ -182,7 +264,8 @@ class PublicExportSurfaceTests(unittest.TestCase):
                 try:
                     # パッケージ属性として取得できるかを試す（遅延読み込みもここで走る）
                     getattr(reminder, name)
-                except Exception as exc:  # noqa: BLE001 - 失敗の型を問わず「参照できない」として報告したい
+                # 失敗の型は問わない（AttributeError も ImportError も「参照できない」で一括して報告したい）
+                except Exception as exc:
                     # 参照できない公開名は `from reminder import *` を壊すので失敗させる
                     self.fail(
                         f"__all__ に載っている {name!r} を参照できません "
@@ -205,6 +288,66 @@ class PublicExportSurfaceTests(unittest.TestCase):
             undeclared, [],
             f"_LAZY_GUI_EXPORTS にあるのに __all__ へ載っていない名前があります: {undeclared}",
         )
+
+    def test_package_init_does_not_use_star_imports(self):
+        """``reminder/__init__.py`` が ``from .x import *`` を使っていないことを担保する。
+
+        星取り込みは「何を公開しているか」がソースから読めず、下の照合でも導出できる名前が
+        ``"*"`` しかないため、公開面がまるごと検査から外れる（fail-open）。
+        """
+        # ソースの import 文から再エクスポート名を導出する
+        eager = _eagerly_reexported_names()
+        # 星取り込みが 1 つでもあれば、公開面が照合できない状態として落とす
+        self.assertNotIn(
+            "*", eager,
+            "reminder/__init__.py で `from .x import *` が使われています。"
+            "公開する名前を明示的に列挙してください"
+            "（星取り込みは公開面を照合できなくします）。",
+        )
+
+    def test_console_script_entry_points_resolve(self):
+        """pyproject の console-scripts が指す名前が実際に解決できることを担保する。
+
+        console-scripts は ``__all__`` ・ eager 再エクスポート ・ ``_LAZY_GUI_EXPORTS`` の
+        どれでもない **4 つ目の手書き一覧**で、3 つを整合させたまま ``main`` を消しても
+        リポジトリ内では何も壊れない（``python -m reminder`` は ``reminder/__main__.py``
+        を通るため）。壊れるのは ``pip install`` / ``pipx install`` した利用者の
+        ``reminder`` コマンドだけなので、ここで突き合わせておく。
+        """
+        # 3.10 には tomllib が無いので、その環境ではこの検査だけをスキップする
+        if tomllib is None:  # pragma: no cover - 3.10 でのみ通る枝
+            self.skipTest("tomllib が無い（Python 3.10）ため console-scripts を読めない")
+        # pyproject の [project.scripts] を読み取る
+        scripts = _console_script_targets()
+        # 定義が 0 件だと常に緑になるため、空の場合はそれ自体を失敗とする（fail-closed）
+        self.assertTrue(
+            scripts,
+            "pyproject.toml に [project.scripts] がありません"
+            "（検査対象 0 件では常に緑になります）。",
+        )
+        # 定義されたコマンドを 1 件ずつ解決してみる
+        for command, target in scripts.items():
+            # どのコマンドで落ちたかが分かるようサブテストとして実行する
+            with self.subTest(command=command):
+                # "module:attr" の形を分解する（":" が無ければ attr が空になる）
+                module_path, separator, attribute = target.partition(":")
+                # console-scripts は必ず "module:attr" の形でなければ呼び出せない
+                self.assertTrue(
+                    separator and attribute,
+                    f"console-script {command!r} の指定 {target!r} が "
+                    '"module:attr" の形になっていません。',
+                )
+                try:
+                    # 左辺のモジュールを読み込み、右辺の属性を取得できるか試す
+                    getattr(importlib.import_module(module_path), attribute)
+                # 失敗の型は問わない（モジュール不在も属性不在も「コマンドが起動できない」で同じ）
+                except Exception as exc:
+                    # 解決できない console-script はインストール後に必ず起動時エラーになる
+                    self.fail(
+                        f"console-script {command!r} が指す {target!r} を解決できません "
+                        f"({type(exc).__name__}: {exc})。"
+                        "pip install / pipx install した利用者のコマンドが起動時に失敗します。"
+                    )
 
     def test_eager_reexports_are_declared_public(self):
         """冒頭で相対 import している再エクスポート名が全て ``__all__`` に載っていることを担保する。"""
