@@ -65,6 +65,7 @@ mypy は `reminder/` 全体を既定で検査し、除外は `[tool.mypy.overrid
 - 入力検証は `_coerce_int()` パターン（範囲外→クランプ、非数値→デフォルト）。
 - tkinter の `StringVar` / `IntVar` はテスト用 `_DummyVar` で代替し、`AppTestCase._app()`（`tests/test_planner.py`）で Tk 無しのモック済みインスタンスを生成する。OS 依存処理は `@patch` でモックする。
 - クロスプラットフォーム: 音/通知は macOS(`afplay`)・Windows(`winsound`)・Linux(`notify-send`+`tk.bell()`)を `platform.system()` で分岐し、必ずフォールバックを用意する。`cairosvg` はオプション依存で `ImportError` 時 graceful degradation。`strftime` の `%-d` 等の非移植指定子は使わない。
+- **パッケージの公開面（`reminder/__init__.py`）は手書きの一覧 3 つ（eager 再エクスポート・`__all__`・`_LAZY_GUI_EXPORTS`）で表しており、ずれても実行時まで何も起きない。** 整合は `tests/test_pure_imports.py` が機械的に固定する（何を検査し、どの変異が以前は全件緑で通っていたかは**同ファイルの docstring が正本**。ここに書き写すと片方だけが古くなる）。**console-scripts（pyproject の `[project.scripts]`）は 4 つ目の手書き一覧**で、3 つを整合させたまま `main` を消しても `python -m reminder` も CI も緑のまま `pipx install` した利用者のコマンドだけが起動時に失敗するため、同テストが pyproject 側も読んで突き合わせる。公開シンボルを増減するときは 4 つとも同じ変更セットで更新する。
 
 ### 見せ方（§15 の具体化）
 
