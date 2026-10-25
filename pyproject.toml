@@ -41,7 +41,7 @@ Repository = "https://github.com/izumacha/my-task-manager"
 reminder = "reminder:main"
 
 [build-system]
-requires = ["setuptools>=84.0.0", "wheel"]
+requires = ["setuptools>=84.2.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
